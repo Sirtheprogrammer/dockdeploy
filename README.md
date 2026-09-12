@@ -173,18 +173,14 @@ Nginx configuration changes on managed servers use a non-destructive 5-step safe
 ## Local Development
 
 ```sh
-# Terminal 1: PostgreSQL
-docker compose up -d postgres
-
-# Terminal 2: API Server (:8080)
+# Terminal 1: API Server (:8081, SQLite by default)
 cd server
-DATABASE_URL='postgres://dockdeploy:dockdeploy@localhost:5432/dockdeploy?sslmode=disable' \
 APP_ENCRYPTION_KEY='$(openssl rand -base64 32)' \
 SESSION_SECRET='$(openssl rand -base64 32)' \
 APP_ENV=development \
 go run ./cmd/dockdeploy
 
-# Terminal 3: Frontend Dashboard (:5173, proxies /api to :8080)
+# Terminal 2: Frontend Dashboard (:5173, proxies /api to :8081)
 cd frontend
 npm install
 npm run dev

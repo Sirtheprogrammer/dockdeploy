@@ -7,6 +7,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings2,
+  Terminal,
   Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -17,7 +18,9 @@ import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CapabilityList } from '@/components/servers/CapabilityList'
 import { LogViewer } from '@/components/servers/LogViewer'
+import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
 import { ServerStatusBadge } from '@/components/servers/ServerStatusBadge'
+import { ServerTerminal } from '@/components/servers/ServerTerminal'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -54,6 +57,7 @@ export function ServerDetail() {
 
   const [tab, setTab] = useState('containers')
   const [logsFor, setLogsFor] = useState<Container | null>(null)
+  const [terminalOpen, setTerminalOpen] = useState(false)
 
   const server = useServer(serverID)
   const info = useDockerInfo(serverID)
@@ -62,6 +66,7 @@ export function ServerDetail() {
 
   const canOperate = can(user, 'container:operate')
   const canDelete = can(user, 'server:delete')
+  const canTerminal = can(user, 'server:write') || canOperate
 
   if (server.isPending) {
     return (
@@ -92,6 +97,12 @@ export function ServerDetail() {
         description={`${server.data.username}@${server.data.host}${server.data.port !== 22 ? `:${server.data.port}` : ''}`}
         actions={
           <>
+            {canTerminal ? (
+              <Button variant="outline" size="sm" onClick={() => setTerminalOpen(true)}>
+                <Terminal className="size-3.5" aria-hidden />
+                Terminal
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" disabled={probe.isPending} onClick={() => probe.mutate()}>
               {probe.isPending ? (
                 <Loader2 className="animate-spin" aria-hidden />
@@ -150,6 +161,7 @@ export function ServerDetail() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="containers">Containers</TabsTrigger>
+            <TabsTrigger value="metrics">Metrics & Health</TabsTrigger>
             <TabsTrigger value="images">Images</TabsTrigger>
             <TabsTrigger value="volumes">Volumes</TabsTrigger>
             <TabsTrigger value="networks">Networks</TabsTrigger>
@@ -161,6 +173,12 @@ export function ServerDetail() {
               serverID={serverID}
               canOperate={canOperate}
               onShowLogs={setLogsFor}
+            />
+          </TabsContent>
+          <TabsContent value="metrics" className="pt-4">
+            <ServerMetricsView
+              server={server.data}
+              onLaunchTerminal={canTerminal ? () => setTerminalOpen(true) : undefined}
             />
           </TabsContent>
           <TabsContent value="images" className="pt-4">
@@ -211,6 +229,18 @@ export function ServerDetail() {
               instead of appending to the previous container's lines. */}
           {logsFor ? (
             <LogViewer key={logsFor.id} serverID={serverID} containerID={logsFor.id} />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={terminalOpen} onOpenChange={setTerminalOpen}>
+        <DialogContent className="max-w-5xl p-4 bg-zinc-950 border-zinc-800 text-zinc-100">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Interactive Server Terminal</DialogTitle>
+            <DialogDescription>Interactive SSH shell on {server.data.name}</DialogDescription>
+          </DialogHeader>
+          {terminalOpen ? (
+            <ServerTerminal server={server.data} onClose={() => setTerminalOpen(false)} />
           ) : null}
         </DialogContent>
       </Dialog>

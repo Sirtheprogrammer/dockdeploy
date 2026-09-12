@@ -272,3 +272,89 @@ export function capabilitiesOf(server: Server | undefined): Capabilities | null 
   const caps = server.capabilities as Capabilities
   return caps && typeof caps.docker_version === 'string' ? caps : null
 }
+
+export type HealthStatus = 'healthy' | 'warning' | 'critical'
+
+export interface CPUMetrics {
+  usage_percent: number
+  cores: number
+  load1: number
+  load5: number
+  load15: number
+}
+
+export interface MemoryMetrics {
+  total_bytes: number
+  used_bytes: number
+  available_bytes: number
+  used_percent: number
+  swap_total_bytes: number
+  swap_used_bytes: number
+  swap_used_percent: number
+}
+
+export interface DiskMetrics {
+  filesystem: string
+  mount: string
+  total_bytes: number
+  used_bytes: number
+  free_bytes: number
+  used_percent: number
+}
+
+export interface DockerMetrics {
+  status: string
+  server_version: string
+  containers_total: number
+  containers_running: number
+  containers_paused?: number
+  containers_stopped: number
+  images_count: number
+}
+
+export interface SystemInfo {
+  hostname: string
+  os: string
+  kernel: string
+  uptime_seconds: number
+  server_time: string
+}
+
+export interface ServerMetrics {
+  server_id: string
+  collected_at: string
+  health: HealthStatus
+  health_issues: string[]
+  system: SystemInfo
+  cpu: CPUMetrics
+  memory: MemoryMetrics
+  disk: DiskMetrics
+  docker: DockerMetrics
+}
+
+export function useServerMetrics(
+  serverID: string,
+  options?: { refetchInterval?: number | false; enabled?: boolean },
+) {
+  return useQuery<ServerMetrics, ApiError>({
+    queryKey: ['servers', serverID, 'metrics'],
+    queryFn: ({ signal }) => api.get<ServerMetrics>(`/servers/${serverID}/metrics`, { signal }),
+    enabled: (options?.enabled ?? true) && serverID !== '',
+    refetchInterval: options?.refetchInterval,
+  })
+}
+
+export function serverTerminalWebSocketURL(
+  serverID: string,
+  cols?: number,
+  rows?: number,
+): string {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  let url = `${proto}//${window.location.host}/api/servers/${serverID}/terminal`
+  const params = new URLSearchParams()
+  if (cols) params.set('cols', cols.toString())
+  if (rows) params.set('rows', rows.toString())
+  const qs = params.toString()
+  if (qs) url += `?${qs}`
+  return url
+}

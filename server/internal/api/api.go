@@ -132,6 +132,9 @@ func (s *Server) Routes() (http.Handler, error) {
 			sv.guarded(http.MethodGet, "/{serverID}/containers/{containerID}", auth.PermServerRead, s.handleInspectContainer)
 			sv.guarded(http.MethodGet, "/{serverID}/containers/{containerID}/logs", auth.PermServerRead, s.handleContainerLogs)
 			sv.guarded(http.MethodPost, "/{serverID}/containers/{containerID}/actions", auth.PermContainerOperate, s.handleContainerAction)
+
+			sv.guarded(http.MethodGet, "/{serverID}/metrics", auth.PermServerRead, s.handleServerMetrics)
+			sv.guarded(http.MethodGet, "/{serverID}/terminal", auth.PermServerWrite, s.handleServerTerminal)
 		})
 
 		api.group("/deployments", func(d routes) {

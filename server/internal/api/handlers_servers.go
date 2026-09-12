@@ -313,6 +313,20 @@ func (s *Server) handleProbeServer(w http.ResponseWriter, r *http.Request) error
 	})
 }
 
+func (s *Server) handleServerMetrics(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	metrics, err := s.Servers.Metrics(r.Context(), server)
+	if err != nil {
+		return Unavailable("Could not collect metrics from %s: %v", server.Name, err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, metrics)
+}
+
 // --- per-server access ---------------------------------------------------
 
 func (s *Server) handleListServerMembers(w http.ResponseWriter, r *http.Request) error {
