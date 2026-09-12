@@ -8,43 +8,26 @@ services:
         VERSION: ${VERSION:-dev}
     image: dockdeploy:latest
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_URL: ${APP_URL:-http://localhost:8080}
       PORT: 8080
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      DATABASE_URL: postgres://dockdeploy:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/dockdeploy?sslmode=disable
+      # SQLite is used by default when DATABASE_URL is unset.
+      # Persistent storage path mapped to the dockdeploy-data volume:
+      SQLITE_PATH: ${SQLITE_PATH:-/home/app/data/dockdeploy.db}
+      # To use PostgreSQL instead, set DATABASE_URL in your .env:
+      DATABASE_URL: ${DATABASE_URL:-}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8080}:8080"
     volumes:
+      # Persists SQLite database and application data
+      - dockdeploy-data:/home/app/data
       # Lets the controller manage its own host as a "local" server.
       # Comment out if you only ever manage remote machines over SSH.
       - /var/run/docker.sock:/var/run/docker.sock
 
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: dockdeploy
-      POSTGRES_DB: dockdeploy
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-    ports:
-      # Loopback only, so `go run` and integration tests can reach it without
-      # exposing the database beyond this machine.
-      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dockdeploy -d dockdeploy"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
 volumes:
-  postgres-data:
+  dockdeploy-data:

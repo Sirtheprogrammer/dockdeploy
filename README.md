@@ -27,16 +27,17 @@ dockdeploy supports two running modes:
 1. **Embedded SQLite (Zero Dependencies / Default)**: If `DATABASE_URL` is omitted or empty, dockdeploy automatically runs using a pure-Go embedded SQLite database (default: `dockdeploy.db` or `SQLITE_PATH`) with zero CGO dependencies.
 2. **PostgreSQL**: Set `DATABASE_URL=postgres://...` to use an external or containerized PostgreSQL instance.
 
-### Running with Docker Compose (PostgreSQL)
+### Running with Docker Compose (SQLite Default)
 
 ```sh
 cp .env.example .env
 openssl rand -base64 32   # -> APP_ENCRYPTION_KEY
 openssl rand -base64 32   # -> SESSION_SECRET
-openssl rand -base64 24   # -> POSTGRES_PASSWORD
 
 docker compose up -d --build
 ```
+
+dockdeploy automatically boots with embedded SQLite persisted to the `dockdeploy-data` volume. No separate database container is required. (To use PostgreSQL instead, set `DATABASE_URL=postgres://...` in `.env`).
 
 ### Running Standalone with SQLite
 
@@ -217,17 +218,21 @@ Save your `APP_ENCRYPTION_KEY` securely (e.g., in a password manager or secrets 
 ### 2. The Database
 
 #### For SQLite:
-Simply copy the SQLite database file (`dockdeploy.db` or your configured `SQLITE_PATH`):
+Copy the SQLite database file:
 
 ```sh
+# Local standalone:
 cp dockdeploy.db dockdeploy_backup_$(date +%F).db
+
+# Docker compose container:
+docker compose cp app:/home/app/data/dockdeploy.db dockdeploy_backup_$(date +%F).db
 ```
 
 #### For PostgreSQL:
 Generate a standard PostgreSQL dump:
 
 ```sh
-docker compose exec postgres pg_dump -U dockdeploy dockdeploy > dockdeploy_backup_$(date +%F).sql
+pg_dump -U dockdeploy -h <host> dockdeploy > dockdeploy_backup_$(date +%F).sql
 ```
 
 ### Restore
@@ -235,13 +240,8 @@ docker compose exec postgres pg_dump -U dockdeploy dockdeploy > dockdeploy_backu
 To restore dockdeploy onto a new machine:
 
 1. Restore `.env` with the **same** `APP_ENCRYPTION_KEY` and `SESSION_SECRET`.
-2. For SQLite: copy your backed-up database file to `dockdeploy.db` (or `SQLITE_PATH`).
-3. For PostgreSQL:
-   ```sh
-   docker compose up -d postgres
-   docker compose exec -T postgres psql -U dockdeploy dockdeploy < dockdeploy_backup_*.sql
-   docker compose up -d app
-   ```
+2. For SQLite: copy your backed-up database file to `dockdeploy.db` (or copy into the container volume via `docker compose cp dockdeploy_backup_*.db app:/home/app/data/dockdeploy.db`).
+3. For PostgreSQL: restore your pg_dump into your PostgreSQL instance before starting dockdeploy.
 
 ---
 

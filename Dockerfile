@@ -29,7 +29,9 @@ FROM alpine:3.21
 # git: controller-side clones for the registry build strategy.
 # openssh-client: known_hosts/key format helpers and operator debugging.
 RUN apk add --no-cache ca-certificates git openssh-client tzdata \
- && adduser -D -u 10001 -h /home/app app
+ && adduser -D -u 10001 -h /home/app app \
+ && mkdir -p /home/app/data \
+ && chown -R app:app /home/app
 USER app
 WORKDIR /home/app
 COPY --from=backend /out/dockdeploy /usr/local/bin/dockdeploy
