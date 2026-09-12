@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -21,14 +22,50 @@ var (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	sqlite *sqliteStore
 }
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+func NewSQLite(db *sql.DB) *Store { return &Store{sqlite: newSQLiteStore(db)} }
+
 // Pool exposes the underlying pool for the few callers that need LISTEN/NOTIFY
-// or a long-lived connection of their own.
+// or a long-lived connection of their own. Returns nil when using SQLite.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
+
+// IsSQLite returns true if the store is backed by SQLite.
+func (s *Store) IsSQLite() bool { return s.sqlite != nil }
+
+// Ping checks whether the underlying database is reachable.
+func (s *Store) Ping(ctx context.Context) error {
+	if s.sqlite != nil {
+		return s.sqlite.Ping(ctx)
+	}
+	if s.pool != nil {
+		return s.pool.Ping(ctx)
+	}
+	return errors.New("store: no database configured")
+}
+
+// Close closes the underlying connection pool or database.
+func (s *Store) Close() error {
+	if s.sqlite != nil {
+		return s.sqlite.Close()
+	}
+	if s.pool != nil {
+		s.pool.Close()
+	}
+	return nil
+}
+
+// SubscribeRuns returns a notification channel that triggers when a run is enqueued or updated.
+func (s *Store) SubscribeRuns(ctx context.Context) (<-chan struct{}, func(), error) {
+	if s.sqlite != nil {
+		return s.sqlite.SubscribeRuns(ctx)
+	}
+	return nil, nil, errors.New("store: SubscribeRuns only available for sqlite; use Pool().Acquire for postgres")
+}
 
 // tx runs fn inside a transaction, rolling back on error or panic.
 func (s *Store) tx(ctx context.Context, fn func(pgx.Tx) error) error {

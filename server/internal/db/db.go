@@ -1,4 +1,4 @@
-// Package db owns the Postgres connection pool and schema migrations.
+// Package db owns the database connection pool (Postgres or SQLite) and schema migrations.
 package db
 
 import (
@@ -6,20 +6,21 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
 
 	"github.com/sirtheprogrammer/docker-deployments/server/migrations"
 )
 
-// Connect opens a pool and waits for the database to accept queries.
-//
-// In the shipped compose stack the app and Postgres start together, so the
-// first few pings routinely fail while Postgres finishes initialising. Retrying
-// here is cheaper than making operators reason about container restart loops.
+// Connect opens a pool and waits for PostgreSQL to accept queries.
 func Connect(ctx context.Context, url string, log *slog.Logger) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
@@ -60,11 +61,53 @@ func Connect(ctx context.Context, url string, log *slog.Logger) (*pgxpool.Pool, 
 	}
 }
 
-// Migrate applies any pending migrations.
-//
-// goose needs a database/sql handle, which pgx provides through its stdlib
-// shim. The handle is opened and closed here so it does not outlive the call
-// and compete with the pool for connections.
+// ConnectSQLite opens a SQLite database file, creates any needed parent directories,
+// and configures essential PRAGMA settings for high concurrency and safety (WAL mode,
+// busy timeout, foreign keys, synchronous=NORMAL).
+func ConnectSQLite(ctx context.Context, pathOrDSN string, log *slog.Logger) (*sql.DB, error) {
+	cleanPath := pathOrDSN
+	if idx := strings.Index(cleanPath, "?"); idx >= 0 {
+		cleanPath = cleanPath[:idx]
+	}
+	cleanPath = strings.TrimPrefix(cleanPath, "file:")
+
+	if dir := filepath.Dir(cleanPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("db: create sqlite directory: %w", err)
+		}
+	}
+
+	dsn := pathOrDSN
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	if !strings.Contains(dsn, "_pragma") {
+		dsn += fmt.Sprintf("%s_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)", sep)
+	}
+
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: open sqlite: %w", err)
+	}
+
+	maxConns := runtime.NumCPU()
+	if maxConns < 4 {
+		maxConns = 4
+	}
+	sqlDB.SetMaxOpenConns(maxConns)
+	sqlDB.SetMaxIdleConns(maxConns / 2)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("db: ping sqlite: %w", err)
+	}
+
+	return sqlDB, nil
+}
+
+// Migrate applies any pending Postgres migrations.
 func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	defer sqlDB.Close()
@@ -91,6 +134,34 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, log *slog.Logger) error {
 		log.Info("schema up to date", "version", after)
 	} else {
 		log.Info("schema migrated", "from", before, "to", after)
+	}
+	return nil
+}
+
+// MigrateSQLite applies migrations for SQLite.
+func MigrateSQLite(ctx context.Context, sqlDB *sql.DB, log *slog.Logger) error {
+	goose.SetBaseFS(migrations.SQLiteFS)
+	goose.SetLogger(gooseLogger{log})
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		return fmt.Errorf("db: set goose dialect: %w", err)
+	}
+
+	before, err := currentVersion(ctx, sqlDB)
+	if err != nil {
+		return err
+	}
+	if err := goose.UpContext(ctx, sqlDB, "sqlite"); err != nil {
+		return fmt.Errorf("db: migrate sqlite: %w", err)
+	}
+	after, err := currentVersion(ctx, sqlDB)
+	if err != nil {
+		return err
+	}
+
+	if before == after {
+		log.Info("sqlite schema up to date", "version", after)
+	} else {
+		log.Info("sqlite schema migrated", "from", before, "to", after)
 	}
 	return nil
 }

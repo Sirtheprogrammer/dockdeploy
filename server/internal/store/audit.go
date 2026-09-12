@@ -29,6 +29,9 @@ const auditColumns = `id, user_id, actor_email, action, resource_type, resource_
 // WriteAudit appends an entry. Callers pass a nil userID for actions taken
 // before authentication, such as a failed sign-in.
 func (s *Store) WriteAudit(ctx context.Context, e AuditEntry) error {
+	if s.sqlite != nil {
+		return s.sqlite.WriteAudit(ctx, e)
+	}
 	meta := e.Meta
 	if len(meta) == 0 {
 		meta = json.RawMessage(`{}`)
@@ -51,6 +54,9 @@ type AuditFilter struct {
 // ListAudit returns entries newest first, paginated by timestamp so new writes
 // do not shift the pages under a reader.
 func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListAudit(ctx, f)
+	}
 	limit := f.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -73,6 +79,9 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 
 // PurgeOldAuditLogs removes audit entries older than the retention period.
 func (s *Store) PurgeOldAuditLogs(ctx context.Context, olderThan time.Duration) (int64, error) {
+	if s.sqlite != nil {
+		return s.sqlite.PurgeOldAuditLogs(ctx, olderThan)
+	}
 	cutoff := time.Now().Add(-olderThan)
 	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_log WHERE created_at < $1`, cutoff)
 	if err != nil {

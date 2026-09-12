@@ -6,3 +6,6 @@ import "embed"
 
 //go:embed *.sql
 var FS embed.FS
+
+//go:embed sqlite/*.sql
+var SQLiteFS embed.FS

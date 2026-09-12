@@ -61,47 +61,62 @@ func run() error {
 		return err
 	}
 
-	pool, err := db.Connect(ctx, cfg.DatabaseURL, log)
-	if err != nil {
-		return err
-	}
-	defer pool.Close()
+	var st *store.Store
+	if cfg.DatabaseDriver == config.DriverSQLite {
+		sqliteDB, err := db.ConnectSQLite(ctx, cfg.DatabaseURL, log)
+		if err != nil {
+			return err
+		}
+		defer sqliteDB.Close()
 
-	if err := db.Migrate(ctx, pool, log); err != nil {
-		return err
-	}
+		if err := db.MigrateSQLite(ctx, sqliteDB, log); err != nil {
+			return err
+		}
+		st = store.NewSQLite(sqliteDB)
+	} else {
+		pool, err := db.Connect(ctx, cfg.DatabaseURL, log)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
 
-	db := store.New(pool)
-	go runHousekeeping(ctx, db, log)
+		if err := db.Migrate(ctx, pool, log); err != nil {
+			return err
+		}
+		st = store.New(pool)
+	}
+	defer st.Close()
+
+	go runHousekeeping(ctx, st, log)
 
 	// One SSH connection per managed server, shared by every request that
 	// needs it and closed on shutdown.
 	sshPool := sshx.NewPool(log)
 	defer sshPool.Close()
 
-	// The deploy engine and its worker. Runs are rows in Postgres, so a build
+	// The deploy engine and its worker. Runs are rows in the database, so a build
 	// survives a page refresh and is picked up again if this process restarts.
 	deployHub := deploy.NewHub()
-	serverManager := servers.NewManager(db, sealer, sshPool, log)
-	engine := deploy.NewEngine(db, sealer, serverManager, deployHub, log, deploy.Config{
+	serverManager := servers.NewManager(st, sealer, sshPool, log)
+	engine := deploy.NewEngine(st, sealer, serverManager, deployHub, log, deploy.Config{
 		PortMin:    cfg.DeployPortMin,
 		PortMax:    cfg.DeployPortMax,
 		RemoteRoot: cfg.DeployRemoteRoot,
 	})
 
-	worker := deploy.NewWorker(db, engine, log, cfg.DeployConcurrency)
+	worker := deploy.NewWorker(st, engine, log, cfg.DeployConcurrency)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		worker.Run(ctx)
 	}()
 
-	nginxManager := nginxx.NewManager(db, sealer, serverManager, log)
+	nginxManager := nginxx.NewManager(st, sealer, serverManager, log)
 
 	srv := &api.Server{
 		Config:  cfg,
 		Log:     log,
-		Store:   db,
+		Store:   st,
 		Sealer:  sealer,
 		Hasher:  auth.NewHasher(cfg.SessionSecret),
 		Servers: serverManager,

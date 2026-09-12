@@ -96,6 +96,9 @@ type NewServer struct {
 // from plaintext to storage, and no way to add a credential column later that
 // quietly skips encryption.
 func (s *Store) CreateServer(ctx context.Context, sealer Sealer, in NewServer) (*Server, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateServer(ctx, sealer, in)
+	}
 	var server *Server
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -171,6 +174,9 @@ func (s *Store) CreateServer(ctx context.Context, sealer Sealer, in NewServer) (
 // which is why the visibility filter lives in SQL: a handler that forgets to
 // apply it would leak the whole fleet.
 func (s *Store) ListServers(ctx context.Context, userID string, all bool) ([]Server, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListServers(ctx, userID, all)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+serverColumns+` FROM servers
 		WHERE $1 OR id IN (SELECT server_id FROM server_members WHERE user_id = $2::uuid)
@@ -183,6 +189,9 @@ func (s *Store) ListServers(ctx context.Context, userID string, all bool) ([]Ser
 }
 
 func (s *Store) ServerByID(ctx context.Context, id string) (*Server, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ServerByID(ctx, id)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+serverColumns+` FROM servers WHERE id = $1`, id)
 	if err != nil {
 		return nil, wrap("store: server by id", err)
@@ -197,6 +206,9 @@ func (s *Store) ServerByID(ctx context.Context, id string) (*Server, error) {
 // CanAccessServer reports whether a user may act on a server. Admins always
 // can; members need an explicit grant.
 func (s *Store) CanAccessServer(ctx context.Context, serverID, userID string, isAdmin bool) (bool, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CanAccessServer(ctx, serverID, userID, isAdmin)
+	}
 	if isAdmin {
 		return true, nil
 	}
@@ -218,6 +230,9 @@ type ServerCredential struct {
 
 // ServerCredential decrypts a server's credentials for immediate use.
 func (s *Store) ServerCredential(ctx context.Context, sealer Sealer, server *Server) (*ServerCredential, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ServerCredential(ctx, sealer, server)
+	}
 	out := &ServerCredential{
 		Target: sshx.Target{
 			Host:        server.Host,
@@ -255,6 +270,9 @@ func (s *Store) ServerCredential(ctx context.Context, sealer Sealer, server *Ser
 // after a probe: writing an empty object there would erase what the last probe
 // found and leave the dashboard showing nothing.
 func (s *Store) UpdateServerStatus(ctx context.Context, id string, status ServerStatus, message string, caps *sshx.Capabilities) error {
+	if s.sqlite != nil {
+		return s.sqlite.UpdateServerStatus(ctx, id, status, message, caps)
+	}
 	var encoded []byte
 	if caps != nil {
 		data, err := json.Marshal(caps)
@@ -279,6 +297,9 @@ func (s *Store) UpdateServerStatus(ctx context.Context, id string, status Server
 // UpdateServer changes the fields a user can edit. Credentials are rotated
 // separately so that renaming a server cannot accidentally clear them.
 func (s *Store) UpdateServer(ctx context.Context, id, name, dockerSocket string) (*Server, error) {
+	if s.sqlite != nil {
+		return s.sqlite.UpdateServer(ctx, id, name, dockerSocket)
+	}
 	rows, err := s.pool.Query(ctx, `
 		UPDATE servers SET name = $2, docker_socket = $3
 		WHERE id = $1
@@ -299,6 +320,9 @@ func (s *Store) UpdateServer(ctx context.Context, id, name, dockerSocket string)
 // Leaving the secrets behind would accumulate undeletable encrypted rows that
 // nothing points at.
 func (s *Store) DeleteServer(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteServer(ctx, id)
+	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var secretIDs []*string
 		err := tx.QueryRow(ctx, `
@@ -336,6 +360,9 @@ type ServerMember struct {
 }
 
 func (s *Store) ListServerMembers(ctx context.Context, serverID string) ([]ServerMember, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListServerMembers(ctx, serverID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT m.server_id, m.user_id, u.email, u.name, m.permission, m.created_at
 		FROM server_members m
@@ -350,6 +377,9 @@ func (s *Store) ListServerMembers(ctx context.Context, serverID string) ([]Serve
 }
 
 func (s *Store) GrantServerAccess(ctx context.Context, serverID, userID string, permission ServerPermission) error {
+	if s.sqlite != nil {
+		return s.sqlite.GrantServerAccess(ctx, serverID, userID, permission)
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO server_members (server_id, user_id, permission)
 		VALUES ($1, $2, $3)
@@ -359,6 +389,9 @@ func (s *Store) GrantServerAccess(ctx context.Context, serverID, userID string, 
 }
 
 func (s *Store) RevokeServerAccess(ctx context.Context, serverID, userID string) error {
+	if s.sqlite != nil {
+		return s.sqlite.RevokeServerAccess(ctx, serverID, userID)
+	}
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM server_members WHERE server_id = $1 AND user_id = $2`, serverID, userID)
 	return wrap("store: revoke server access", err)

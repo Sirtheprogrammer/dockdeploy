@@ -58,6 +58,9 @@ func insertSecret(ctx context.Context, tx pgx.Tx, sealer Sealer, kind secrets.Ki
 // openSecret decrypts a secret by id. A nil id yields an empty string, which
 // is the normal case for optional credentials like a sudo password.
 func (s *Store) openSecret(ctx context.Context, sealer Sealer, id *string) (string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.openSecret(ctx, sealer, id)
+	}
 	if id == nil {
 		return "", nil
 	}
@@ -83,6 +86,9 @@ func (s *Store) openSecret(ctx context.Context, sealer Sealer, id *string) (stri
 // ReplaceSecret rotates the value behind an existing secret id, keeping the id
 // stable so referencing rows need no update.
 func (s *Store) ReplaceSecret(ctx context.Context, sealer Sealer, id, plaintext string) error {
+	if s.sqlite != nil {
+		return s.sqlite.ReplaceSecret(ctx, sealer, id, plaintext)
+	}
 	nonce, ciphertext, err := sealer.SealString(plaintext, []byte(id))
 	if err != nil {
 		return fmt.Errorf("store: seal secret: %w", err)

@@ -18,6 +18,9 @@ type Session struct {
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID string, tokenHash []byte, expiresAt time.Time, ip, userAgent string) (*Session, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateSession(ctx, userID, tokenHash, expiresAt, ip, userAgent)
+	}
 	rows, err := s.pool.Query(ctx, `
 		INSERT INTO sessions (user_id, token_hash, expires_at, ip, user_agent)
 		VALUES ($1, $2, $3, $4, $5)
@@ -45,6 +48,9 @@ type SessionUser struct {
 // caller forgets to check, and the suspended-user case is reported distinctly
 // from "no such session" so the UI can explain why access stopped.
 func (s *Store) SessionByTokenHash(ctx context.Context, tokenHash []byte) (*SessionUser, error) {
+	if s.sqlite != nil {
+		return s.sqlite.SessionByTokenHash(ctx, tokenHash)
+	}
 	row := s.pool.QueryRow(ctx, `
 		SELECT s.id, s.user_id, s.expires_at, s.last_used_at, s.ip, s.user_agent, s.created_at,
 		       u.id, u.email, u.name, u.password_hash, u.role, u.status,
@@ -69,12 +75,18 @@ func (s *Store) SessionByTokenHash(ctx context.Context, tokenHash []byte) (*Sess
 // TouchSession records activity and slides the expiry forward, so an active
 // user is not signed out mid-deploy.
 func (s *Store) TouchSession(ctx context.Context, id string, expiresAt time.Time) error {
+	if s.sqlite != nil {
+		return s.sqlite.TouchSession(ctx, id, expiresAt)
+	}
 	_, err := s.pool.Exec(ctx,
 		`UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE id = $1`, id, expiresAt)
 	return wrap("store: touch session", err)
 }
 
 func (s *Store) ListSessions(ctx context.Context, userID string) ([]Session, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListSessions(ctx, userID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, expires_at, last_used_at, ip, user_agent, created_at
 		FROM sessions WHERE user_id = $1 AND expires_at > now()
@@ -87,11 +99,17 @@ func (s *Store) ListSessions(ctx context.Context, userID string) ([]Session, err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteSession(ctx, id)
+	}
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, id)
 	return wrap("store: delete session", err)
 }
 
 func (s *Store) DeleteSessionsForUser(ctx context.Context, userID string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteSessionsForUser(ctx, userID)
+	}
 	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
 	return wrap("store: delete user sessions", err)
 }
@@ -99,6 +117,9 @@ func (s *Store) DeleteSessionsForUser(ctx context.Context, userID string) error 
 // PurgeExpiredSessions is called periodically; expired rows are already
 // unusable, this just stops the table growing without bound.
 func (s *Store) PurgeExpiredSessions(ctx context.Context) (int64, error) {
+	if s.sqlite != nil {
+		return s.sqlite.PurgeExpiredSessions(ctx)
+	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	if err != nil {
 		return 0, wrap("store: purge sessions", err)

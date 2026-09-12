@@ -20,6 +20,9 @@ type APIToken struct {
 const apiTokenColumns = `id, user_id, name, prefix, last_used_at, expires_at, created_at`
 
 func (s *Store) CreateAPIToken(ctx context.Context, userID, name string, tokenHash []byte, prefix string, expiresAt *time.Time) (*APIToken, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateAPIToken(ctx, userID, name, tokenHash, prefix, expiresAt)
+	}
 	rows, err := s.pool.Query(ctx, `
 		INSERT INTO api_tokens (user_id, name, token_hash, prefix, expires_at)
 		VALUES ($1, $2, $3, $4, $5)
@@ -43,6 +46,9 @@ type TokenUser struct {
 // APITokenByHash resolves a bearer token. A NULL expiry means the token never
 // expires, which is the common case for a CI credential.
 func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (*TokenUser, error) {
+	if s.sqlite != nil {
+		return s.sqlite.APITokenByHash(ctx, tokenHash)
+	}
 	row := s.pool.QueryRow(ctx, `
 		SELECT t.id, t.user_id, t.name, t.prefix, t.last_used_at, t.expires_at, t.created_at,
 		       u.id, u.email, u.name, u.password_hash, u.role, u.status,
@@ -65,11 +71,17 @@ func (s *Store) APITokenByHash(ctx context.Context, tokenHash []byte) (*TokenUse
 }
 
 func (s *Store) TouchAPIToken(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.TouchAPIToken(ctx, id)
+	}
 	_, err := s.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, id)
 	return wrap("store: touch api token", err)
 }
 
 func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]APIToken, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListAPITokens(ctx, userID)
+	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+apiTokenColumns+` FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -82,6 +94,9 @@ func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]APIToken, e
 // DeleteAPIToken is scoped to the owner, so guessing another token id does not
 // let one user revoke a token belonging to someone else.
 func (s *Store) DeleteAPIToken(ctx context.Context, id, userID string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteAPIToken(ctx, id, userID)
+	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM api_tokens WHERE id = $1 AND user_id = $2`, id, userID)
 	if err != nil {
 		return wrap("store: delete api token", err)

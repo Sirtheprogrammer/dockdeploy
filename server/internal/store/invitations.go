@@ -31,6 +31,9 @@ const invitationColumns = `id, email, name, role, invited_by, expires_at, accept
 // same address. Without the replace, re-inviting someone would leave two valid
 // links and no way to tell which was revoked.
 func (s *Store) CreateInvitation(ctx context.Context, email, name string, role auth.Role, invitedBy string, tokenHash []byte, expiresAt time.Time) (*Invitation, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateInvitation(ctx, email, name, role, invitedBy, tokenHash, expiresAt)
+	}
 	var invitation *Invitation
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx,
@@ -60,6 +63,9 @@ func (s *Store) CreateInvitation(ctx context.Context, email, name string, role a
 // InvitationByTokenHash returns a still-usable invitation, filtering spent and
 // expired ones in SQL.
 func (s *Store) InvitationByTokenHash(ctx context.Context, tokenHash []byte) (*Invitation, error) {
+	if s.sqlite != nil {
+		return s.sqlite.InvitationByTokenHash(ctx, tokenHash)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+invitationColumns+` FROM invitations
 		WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > now()`, tokenHash)
@@ -74,6 +80,9 @@ func (s *Store) InvitationByTokenHash(ctx context.Context, tokenHash []byte) (*I
 }
 
 func (s *Store) ListInvitations(ctx context.Context) ([]Invitation, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListInvitations(ctx)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+invitationColumns+` FROM invitations
 		WHERE accepted_at IS NULL AND expires_at > now()
@@ -88,6 +97,9 @@ func (s *Store) ListInvitations(ctx context.Context) ([]Invitation, error) {
 // AcceptInvitation creates the account and spends the invitation atomically, so
 // a link can never be redeemed twice.
 func (s *Store) AcceptInvitation(ctx context.Context, invitationID, name, passwordHash string) (*User, error) {
+	if s.sqlite != nil {
+		return s.sqlite.AcceptInvitation(ctx, invitationID, name, passwordHash)
+	}
 	var user *User
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		var email string
@@ -124,6 +136,9 @@ func (s *Store) AcceptInvitation(ctx context.Context, invitationID, name, passwo
 }
 
 func (s *Store) DeleteInvitation(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteInvitation(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM invitations WHERE id = $1`, id)
 	if err != nil {
 		return wrap("store: delete invitation", err)

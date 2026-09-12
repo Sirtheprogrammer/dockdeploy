@@ -23,7 +23,11 @@ All planned milestones are complete and verified:
 
 ## Running It
 
-Requires Docker and Docker Compose.
+dockdeploy supports two running modes:
+1. **Embedded SQLite (Zero Dependencies / Default)**: If `DATABASE_URL` is omitted or empty, dockdeploy automatically runs using a pure-Go embedded SQLite database (default: `dockdeploy.db` or `SQLITE_PATH`) with zero CGO dependencies.
+2. **PostgreSQL**: Set `DATABASE_URL=postgres://...` to use an external or containerized PostgreSQL instance.
+
+### Running with Docker Compose (PostgreSQL)
 
 ```sh
 cp .env.example .env
@@ -34,7 +38,16 @@ openssl rand -base64 24   # -> POSTGRES_PASSWORD
 docker compose up -d --build
 ```
 
-The dashboard is served on <http://localhost:8080>. The database schema automatically migrates itself on startup.
+### Running Standalone with SQLite
+
+```sh
+export APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
+export SESSION_SECRET=$(openssl rand -base64 32)
+# DATABASE_URL is not set: dockdeploy uses embedded SQLite automatically!
+./server/cmd/dockdeploy/dockdeploy
+```
+
+The dashboard is served on <http://localhost:8080>. The database schema automatically migrates itself on startup (both SQLite and PostgreSQL).
 
 > [!IMPORTANT]
 > `APP_ENCRYPTION_KEY` seals every credential the platform stores (SSH private keys, passwords, registry credentials, env secrets, and webhook secrets). **Back it up immediately.** If lost, stored secrets cannot be decrypted and must be re-entered.
@@ -46,7 +59,7 @@ By default, the container binds to `127.0.0.1:8080`. Put a reverse proxy with TL
 ## Architecture & How It Works
 
 ```
-browser ──► dockdeploy (Go + embedded SPA) ──► PostgreSQL
+browser ──► dockdeploy (Go + embedded SPA) ──► SQLite (default) or PostgreSQL
                      │
                      └── SSH ──► your server ──► /var/run/docker.sock
                                              └── /etc/nginx (vhosts)
@@ -55,7 +68,7 @@ browser ──► dockdeploy (Go + embedded SPA) ──► PostgreSQL
 
 1. **Agentless Tunneling**: The controller opens one pooled SSH connection per server and forwards a stream straight to `/var/run/docker.sock`. It speaks the official Docker Engine API directly without requiring third-party agents or exposed TCP ports.
 2. **Strict Host Key Pinning**: Host keys are captured on the first connection (TOFU). The user explicitly confirms the fingerprint before dockdeploy executes any commands. Afterwards, all connections enforce `ssh.FixedHostKey`.
-3. **Database-Backed Job Queue**: Deployments are queued in PostgreSQL using `SELECT ... FOR UPDATE SKIP LOCKED` and notified via `LISTEN/NOTIFY`. Runs persist across browser refreshes and server reboots.
+3. **Database-Backed Job Queue**: Deployments are queued in SQLite (with thread-safe event broadcaster) or PostgreSQL (using `SKIP LOCKED` and `LISTEN/NOTIFY`). Runs persist across browser refreshes and server reboots.
 4. **Isolated Virtual Hosts**: Each managed domain receives an independent Nginx server configuration block in `/etc/nginx/sites-available` (Debian/Ubuntu) or `/etc/nginx/conf.d` (RHEL/CentOS).
 
 ---
@@ -201,7 +214,16 @@ A complete backup of dockdeploy requires two components:
 ### 1. The Encryption Key
 Save your `APP_ENCRYPTION_KEY` securely (e.g., in a password manager or secrets vault).
 
-### 2. The PostgreSQL Database
+### 2. The Database
+
+#### For SQLite:
+Simply copy the SQLite database file (`dockdeploy.db` or your configured `SQLITE_PATH`):
+
+```sh
+cp dockdeploy.db dockdeploy_backup_$(date +%F).db
+```
+
+#### For PostgreSQL:
 Generate a standard PostgreSQL dump:
 
 ```sh
@@ -213,16 +235,11 @@ docker compose exec postgres pg_dump -U dockdeploy dockdeploy > dockdeploy_backu
 To restore dockdeploy onto a new machine:
 
 1. Restore `.env` with the **same** `APP_ENCRYPTION_KEY` and `SESSION_SECRET`.
-2. Start PostgreSQL:
+2. For SQLite: copy your backed-up database file to `dockdeploy.db` (or `SQLITE_PATH`).
+3. For PostgreSQL:
    ```sh
    docker compose up -d postgres
-   ```
-3. Import the database dump:
-   ```sh
    docker compose exec -T postgres psql -U dockdeploy dockdeploy < dockdeploy_backup_*.sql
-   ```
-4. Start the dockdeploy application:
-   ```sh
    docker compose up -d app
    ```
 

@@ -19,12 +19,20 @@ import (
 // AES-256-GCM takes a 32 byte key; nothing shorter is accepted.
 const EncryptionKeySize = 32
 
+type DatabaseDriver string
+
+const (
+	DriverPostgres DatabaseDriver = "postgres"
+	DriverSQLite   DatabaseDriver = "sqlite"
+)
+
 type Config struct {
 	Env    string // "development" or "production"
 	Port   int
 	AppURL string
 
-	DatabaseURL string
+	DatabaseDriver DatabaseDriver
+	DatabaseURL    string
 
 	// EncryptionKey seals credentials at rest. Losing it makes every stored
 	// SSH key, registry password and deployment secret unrecoverable.
@@ -57,11 +65,34 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env:           envOr("APP_ENV", "development"),
 		AppURL:        strings.TrimRight(envOr("APP_URL", "http://localhost:8080"), "/"),
-		DatabaseURL:   os.Getenv("DATABASE_URL"),
 		ShutdownGrace: 30 * time.Second,
 
 		DeployRemoteRoot:  envOr("DEPLOY_REMOTE_ROOT", ".dockdeploy/apps"),
 		DeployConcurrency: 2,
+	}
+
+	rawDB := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if rawDB == "" {
+		rawDB = strings.TrimSpace(os.Getenv("SQLITE_PATH"))
+	}
+	driverEnv := strings.ToLower(strings.TrimSpace(os.Getenv("DATABASE_DRIVER")))
+
+	if driverEnv == "postgres" || strings.HasPrefix(rawDB, "postgres://") || strings.HasPrefix(rawDB, "postgresql://") {
+		cfg.DatabaseDriver = DriverPostgres
+		cfg.DatabaseURL = rawDB
+		if cfg.DatabaseURL == "" {
+			note("DATABASE_URL is required when using postgres (e.g. postgres://user:pass@host:5432/dockdeploy?sslmode=disable)")
+		}
+	} else {
+		// SQLite is used when Postgres is not set, or when SQLite is explicitly specified
+		cfg.DatabaseDriver = DriverSQLite
+		if rawDB == "" {
+			cfg.DatabaseURL = "dockdeploy.db"
+		} else {
+			trimmed := strings.TrimPrefix(rawDB, "sqlite://")
+			trimmed = strings.TrimPrefix(trimmed, "sqlite:")
+			cfg.DatabaseURL = trimmed
+		}
 	}
 
 	var err error
@@ -94,10 +125,6 @@ func Load() (*Config, error) {
 		note("PORT must be a number between 1 and 65535, got %q", os.Getenv("PORT"))
 	}
 	cfg.Port = port
-
-	if cfg.DatabaseURL == "" {
-		note("DATABASE_URL is required (e.g. postgres://user:pass@host:5432/dockdeploy?sslmode=disable)")
-	}
 
 	cfg.EncryptionKey, err = decodeKey("APP_ENCRYPTION_KEY", EncryptionKeySize)
 	if err != nil {

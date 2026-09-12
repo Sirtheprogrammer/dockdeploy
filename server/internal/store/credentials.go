@@ -29,6 +29,9 @@ type Registry struct {
 const registryColumns = `id, name, url, username, secret_id, created_by, created_at, updated_at`
 
 func (s *Store) CreateRegistry(ctx context.Context, sealer Sealer, name, url, username, password, createdBy string) (*Registry, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateRegistry(ctx, sealer, name, url, username, password, createdBy)
+	}
 	var registry *Registry
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -56,6 +59,9 @@ func (s *Store) CreateRegistry(ctx context.Context, sealer Sealer, name, url, us
 }
 
 func (s *Store) ListRegistries(ctx context.Context) ([]Registry, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListRegistries(ctx)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+registryColumns+` FROM registries ORDER BY name`)
 	if err != nil {
 		return nil, wrap("store: list registries", err)
@@ -65,6 +71,9 @@ func (s *Store) ListRegistries(ctx context.Context) ([]Registry, error) {
 }
 
 func (s *Store) RegistryByID(ctx context.Context, id string) (*Registry, error) {
+	if s.sqlite != nil {
+		return s.sqlite.RegistryByID(ctx, id)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+registryColumns+` FROM registries WHERE id = $1`, id)
 	if err != nil {
 		return nil, wrap("store: registry by id", err)
@@ -80,10 +89,16 @@ func (s *Store) RegistryByID(ctx context.Context, id string) (*Registry, error) 
 // is a credential: it goes into a Docker auth header or a stdin-fed
 // `docker login --password-stdin`, never onto a command line.
 func (s *Store) RegistryPassword(ctx context.Context, sealer Sealer, registry *Registry) (string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.RegistryPassword(ctx, sealer, registry)
+	}
 	return s.openSecret(ctx, sealer, registry.SecretID)
 }
 
 func (s *Store) DeleteRegistry(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteRegistry(ctx, id)
+	}
 	return s.deleteWithSecret(ctx, "registries", id, "secret_id")
 }
 
@@ -105,6 +120,9 @@ type GitCredential struct {
 const gitCredentialColumns = `id, name, provider, kind, username, secret_id, created_by, created_at, updated_at`
 
 func (s *Store) CreateGitCredential(ctx context.Context, sealer Sealer, name string, kind gitx.Kind, username, secret, createdBy string) (*GitCredential, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateGitCredential(ctx, sealer, name, kind, username, secret, createdBy)
+	}
 	var credential *GitCredential
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -132,6 +150,9 @@ func (s *Store) CreateGitCredential(ctx context.Context, sealer Sealer, name str
 }
 
 func (s *Store) ListGitCredentials(ctx context.Context) ([]GitCredential, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListGitCredentials(ctx)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+gitCredentialColumns+` FROM git_credentials ORDER BY name`)
 	if err != nil {
 		return nil, wrap("store: list git credentials", err)
@@ -141,6 +162,9 @@ func (s *Store) ListGitCredentials(ctx context.Context) ([]GitCredential, error)
 }
 
 func (s *Store) GitCredentialByID(ctx context.Context, id string) (*GitCredential, error) {
+	if s.sqlite != nil {
+		return s.sqlite.GitCredentialByID(ctx, id)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+gitCredentialColumns+` FROM git_credentials WHERE id = $1`, id)
 	if err != nil {
 		return nil, wrap("store: git credential by id", err)
@@ -155,6 +179,9 @@ func (s *Store) GitCredentialByID(ctx context.Context, id string) (*GitCredentia
 // ResolveGitCredential decrypts a credential for one clone. A nil id yields
 // nil, which is the normal case for a public repository.
 func (s *Store) ResolveGitCredential(ctx context.Context, sealer Sealer, id *string) (*gitx.Credential, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ResolveGitCredential(ctx, sealer, id)
+	}
 	if id == nil {
 		return nil, nil
 	}
@@ -175,6 +202,9 @@ func (s *Store) ResolveGitCredential(ctx context.Context, sealer Sealer, id *str
 }
 
 func (s *Store) DeleteGitCredential(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteGitCredential(ctx, id)
+	}
 	return s.deleteWithSecret(ctx, "git_credentials", id, "secret_id")
 }
 

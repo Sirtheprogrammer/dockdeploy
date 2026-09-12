@@ -163,6 +163,28 @@ func (w *Worker) listen(ctx context.Context, wake chan<- struct{}) {
 }
 
 func (w *Worker) listenOnce(ctx context.Context, wake chan<- struct{}) error {
+	if w.store.Pool() == nil {
+		ch, cancel, err := w.store.SubscribeRuns(ctx)
+		if err != nil {
+			return err
+		}
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case _, ok := <-ch:
+				if !ok {
+					return nil
+				}
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
+
 	conn, err := w.store.Pool().Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire listener connection: %w", err)

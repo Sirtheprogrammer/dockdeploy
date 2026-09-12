@@ -164,6 +164,9 @@ type NewDeployment struct {
 }
 
 func (s *Store) CreateDeployment(ctx context.Context, sealer Sealer, in NewDeployment) (*Deployment, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateDeployment(ctx, sealer, in)
+	}
 	var deployment *Deployment
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -203,6 +206,9 @@ func (s *Store) CreateDeployment(ctx context.Context, sealer Sealer, in NewDeplo
 // visibility rule lives in SQL for the same reason it does for servers: a
 // handler that forgot it would leak another team's applications.
 func (s *Store) ListDeployments(ctx context.Context, userID string, all bool) ([]Deployment, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListDeployments(ctx, userID, all)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+deploymentColumns+` FROM deployments
 		WHERE $1 OR server_id IN (
@@ -217,6 +223,9 @@ func (s *Store) ListDeployments(ctx context.Context, userID string, all bool) ([
 }
 
 func (s *Store) DeploymentByID(ctx context.Context, id string) (*Deployment, error) {
+	if s.sqlite != nil {
+		return s.sqlite.DeploymentByID(ctx, id)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+deploymentColumns+` FROM deployments WHERE id = $1`, id)
 	if err != nil {
 		return nil, wrap("store: deployment by id", err)
@@ -229,6 +238,9 @@ func (s *Store) DeploymentByID(ctx context.Context, id string) (*Deployment, err
 }
 
 func (s *Store) UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, runID *string) error {
+	if s.sqlite != nil {
+		return s.sqlite.UpdateDeploymentStatus(ctx, id, status, runID)
+	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE deployments
 		SET status = $2, current_run_id = COALESCE($3::uuid, current_run_id)
@@ -237,11 +249,17 @@ func (s *Store) UpdateDeploymentStatus(ctx context.Context, id string, status De
 }
 
 func (s *Store) SetDeploymentPort(ctx context.Context, id string, port int) error {
+	if s.sqlite != nil {
+		return s.sqlite.SetDeploymentPort(ctx, id, port)
+	}
 	_, err := s.pool.Exec(ctx, `UPDATE deployments SET host_port = $2 WHERE id = $1`, id, port)
 	return wrap("store: set deployment port", err)
 }
 
 func (s *Store) DeleteDeployment(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteDeployment(ctx, id)
+	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var webhookID *string
 		var envSecrets []*string
@@ -281,6 +299,9 @@ func (s *Store) DeleteDeployment(ctx context.Context, id string) error {
 // leaves its container running and still holding the port, and containers the
 // platform never created may sit in the range too.
 func (s *Store) AllocateHostPort(ctx context.Context, serverID string, min, max int, inUse []int) (int, error) {
+	if s.sqlite != nil {
+		return s.sqlite.AllocateHostPort(ctx, serverID, min, max, inUse)
+	}
 	var port *int
 	err := s.pool.QueryRow(ctx, `
 		SELECT candidate FROM generate_series($2::int, $3::int) AS candidate
@@ -320,6 +341,9 @@ type EnvVar struct {
 // saving the form would encrypt an empty string over the real credential and
 // the next deploy would start the application with a blank password.
 func (s *Store) SetDeploymentEnv(ctx context.Context, sealer Sealer, deploymentID string, vars []EnvVar) error {
+	if s.sqlite != nil {
+		return s.sqlite.SetDeploymentEnv(ctx, sealer, deploymentID, vars)
+	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		// Existing secrets by key, so the ones being kept can be carried over
 		// rather than deleted and rewritten.
@@ -399,6 +423,9 @@ func (s *Store) SetDeploymentEnv(ctx context.Context, sealer Sealer, deploymentI
 
 // ListDeploymentEnv returns variables with secret values masked, for display.
 func (s *Store) ListDeploymentEnv(ctx context.Context, deploymentID string) ([]EnvVar, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListDeploymentEnv(ctx, deploymentID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT key, value, is_secret FROM deployment_env
 		WHERE deployment_id = $1 ORDER BY key`, deploymentID)
@@ -426,6 +453,9 @@ func (s *Store) ListDeploymentEnv(ctx context.Context, deploymentID string) ([]E
 // ResolveDeploymentEnv decrypts the environment for writing to the server.
 // The result is written to a 0600 .env file and must never be logged.
 func (s *Store) ResolveDeploymentEnv(ctx context.Context, sealer Sealer, deploymentID string) (map[string]string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ResolveDeploymentEnv(ctx, sealer, deploymentID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT key, value, secret_id, is_secret FROM deployment_env
 		WHERE deployment_id = $1 ORDER BY key`, deploymentID)
@@ -473,6 +503,9 @@ func (s *Store) ResolveDeploymentEnv(ctx context.Context, sealer Sealer, deploym
 // SecretEnvValues returns just the sensitive values, so log output can be
 // scrubbed of them before it is persisted or streamed.
 func (s *Store) SecretEnvValues(ctx context.Context, sealer Sealer, deploymentID string) ([]string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.SecretEnvValues(ctx, sealer, deploymentID)
+	}
 	env, err := s.ResolveDeploymentEnv(ctx, sealer, deploymentID)
 	if err != nil {
 		return nil, err
@@ -500,6 +533,9 @@ func (s *Store) SecretEnvValues(ctx context.Context, sealer Sealer, deploymentID
 
 // DeploymentWebhookSecret decrypts the webhook secret for push-to-deploy triggers.
 func (s *Store) DeploymentWebhookSecret(ctx context.Context, sealer Sealer, deployment *Deployment) (string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.DeploymentWebhookSecret(ctx, sealer, deployment)
+	}
 	if deployment.WebhookSecretID == nil {
 		return "", errors.New("deployment has no webhook secret")
 	}

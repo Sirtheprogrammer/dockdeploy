@@ -79,6 +79,9 @@ func (s *Store) EnqueueRun(ctx context.Context, deploymentID string, trigger Run
 
 // EnqueueRunWithParams creates a queued run with optional image_ref or commit_sha (e.g. for rollback) and wakes a worker.
 func (s *Store) EnqueueRunWithParams(ctx context.Context, params EnqueueRunParams) (*Run, error) {
+	if s.sqlite != nil {
+		return s.sqlite.EnqueueRunWithParams(ctx, params)
+	}
 	var run *Run
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -117,6 +120,9 @@ func (s *Store) EnqueueRunWithParams(ctx context.Context, params EnqueueRunParam
 // locked by another transaction is passed over rather than waited on, so
 // workers never serialise behind each other.
 func (s *Store) ClaimRun(ctx context.Context, workerID string) (*Run, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ClaimRun(ctx, workerID)
+	}
 	var run *Run
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -158,6 +164,9 @@ func (s *Store) ClaimRun(ctx context.Context, workerID string) (*Run, error) {
 // Without this a crash during a deploy leaves a run marked running for ever,
 // and the deployment stuck showing "deploying" with nothing working on it.
 func (s *Store) ReleaseStaleRuns(ctx context.Context, olderThan time.Duration) (int64, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ReleaseStaleRuns(ctx, olderThan)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE deployment_runs
 		SET status = 'failed',
@@ -173,6 +182,9 @@ func (s *Store) ReleaseStaleRuns(ctx context.Context, olderThan time.Duration) (
 
 // FinishRun records the outcome and updates the parent deployment.
 func (s *Store) FinishRun(ctx context.Context, runID string, status RunStatus, imageRef, commitSHA, failure string) error {
+	if s.sqlite != nil {
+		return s.sqlite.FinishRun(ctx, runID, status, imageRef, commitSHA, failure)
+	}
 	return s.tx(ctx, func(tx pgx.Tx) error {
 		var deploymentID string
 		err := tx.QueryRow(ctx, `
@@ -205,6 +217,9 @@ func (s *Store) FinishRun(ctx context.Context, runID string, status RunStatus, i
 }
 
 func (s *Store) RunByID(ctx context.Context, id string) (*Run, error) {
+	if s.sqlite != nil {
+		return s.sqlite.RunByID(ctx, id)
+	}
 	rows, err := s.pool.Query(ctx, `SELECT `+runColumns+` FROM deployment_runs WHERE id = $1`, id)
 	if err != nil {
 		return nil, wrap("store: run by id", err)
@@ -217,6 +232,9 @@ func (s *Store) RunByID(ctx context.Context, id string) (*Run, error) {
 }
 
 func (s *Store) ListRuns(ctx context.Context, deploymentID string, limit int) ([]Run, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListRuns(ctx, deploymentID, limit)
+	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
@@ -232,6 +250,9 @@ func (s *Store) ListRuns(ctx context.Context, deploymentID string, limit int) ([
 
 // LastSuccessfulRun finds the run to roll back to.
 func (s *Store) LastSuccessfulRun(ctx context.Context, deploymentID, excludeRunID string) (*Run, error) {
+	if s.sqlite != nil {
+		return s.sqlite.LastSuccessfulRun(ctx, deploymentID, excludeRunID)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+runColumns+` FROM deployment_runs
 		WHERE deployment_id = $1 AND status = 'succeeded'
@@ -248,6 +269,9 @@ func (s *Store) LastSuccessfulRun(ctx context.Context, deploymentID, excludeRunI
 }
 
 func (s *Store) CancelRun(ctx context.Context, runID string) error {
+	if s.sqlite != nil {
+		return s.sqlite.CancelRun(ctx, runID)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE deployment_runs
 		SET status = 'cancelled', finished_at = now()
@@ -278,6 +302,9 @@ type LogEntry struct {
 // Batching matters: a docker build emits thousands of lines, and one INSERT
 // per line would make the database the bottleneck in the build.
 func (s *Store) AppendLogs(ctx context.Context, runID string, startSeq int64, entries []LogEntry) error {
+	if s.sqlite != nil {
+		return s.sqlite.AppendLogs(ctx, runID, startSeq, entries)
+	}
 	if len(entries) == 0 {
 		return nil
 	}
@@ -304,6 +331,9 @@ func (s *Store) AppendLogs(ctx context.Context, runID string, startSeq int64, en
 // ListLogs replays stored output, so a client that reloads mid-build sees
 // everything from the start before attaching to the live stream.
 func (s *Store) ListLogs(ctx context.Context, runID string, afterSeq int64, limit int) ([]LogEntry, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListLogs(ctx, runID, afterSeq, limit)
+	}
 	if limit <= 0 || limit > 5000 {
 		limit = 2000
 	}
@@ -321,6 +351,9 @@ func (s *Store) ListLogs(ctx context.Context, runID string, afterSeq int64, limi
 // PruneRunHistory keeps the most recent runs per deployment and deletes the
 // rest, so log volume does not grow without bound.
 func (s *Store) PruneRunHistory(ctx context.Context, keepPerDeployment int) (int64, error) {
+	if s.sqlite != nil {
+		return s.sqlite.PruneRunHistory(ctx, keepPerDeployment)
+	}
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM deployment_runs r
 		WHERE r.status <> 'running'

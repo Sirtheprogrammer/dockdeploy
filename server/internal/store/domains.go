@@ -68,6 +68,9 @@ type NewDomain struct {
 }
 
 func (s *Store) CreateDomain(ctx context.Context, in NewDomain) (*Domain, error) {
+	if s.sqlite != nil {
+		return s.sqlite.CreateDomain(ctx, in)
+	}
 	if in.SSLMode == "" {
 		in.SSLMode = DomainSSLNone
 	}
@@ -99,6 +102,9 @@ func (s *Store) CreateDomain(ctx context.Context, in NewDomain) (*Domain, error)
 
 
 func (s *Store) DomainByID(ctx context.Context, id string) (*Domain, error) {
+	if s.sqlite != nil {
+		return s.sqlite.DomainByID(ctx, id)
+	}
 	row := s.pool.QueryRow(ctx, `SELECT `+domainColumns+` FROM domains WHERE id = $1`, id)
 	var d Domain
 	if err := row.Scan(
@@ -115,6 +121,9 @@ func (s *Store) DomainByID(ctx context.Context, id string) (*Domain, error) {
 }
 
 func (s *Store) DomainByHostname(ctx context.Context, hostname string) (*Domain, error) {
+	if s.sqlite != nil {
+		return s.sqlite.DomainByHostname(ctx, hostname)
+	}
 	row := s.pool.QueryRow(ctx, `SELECT `+domainColumns+` FROM domains WHERE hostname = $1`, strings.ToLower(strings.TrimSpace(hostname)))
 	var d Domain
 	if err := row.Scan(
@@ -136,6 +145,9 @@ type DomainFilter struct {
 }
 
 func (s *Store) ListDomains(ctx context.Context, filter DomainFilter) ([]Domain, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ListDomains(ctx, filter)
+	}
 	query := `SELECT ` + domainColumns + ` FROM domains WHERE 1=1`
 	var args []any
 	argIdx := 1
@@ -189,6 +201,9 @@ type UpdateDomainParams struct {
 }
 
 func (s *Store) UpdateDomainStatus(ctx context.Context, id string, params UpdateDomainParams) error {
+	if s.sqlite != nil {
+		return s.sqlite.UpdateDomainStatus(ctx, id, params)
+	}
 	query := `UPDATE domains SET status = $1, status_message = $2`
 	args := []any{params.Status, params.StatusMessage}
 	idx := 3
@@ -218,6 +233,9 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, id string, params Update
 }
 
 func (s *Store) DeleteDomain(ctx context.Context, id string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DeleteDomain(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx, `DELETE FROM domains WHERE id = $1`, id)
 	if err != nil {
 		return wrap("store: delete domain", err)

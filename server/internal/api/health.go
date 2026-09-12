@@ -32,7 +32,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) error {
 	}
 	status := http.StatusOK
 
-	if err := s.Store.Pool().Ping(ctx); err != nil {
+	if err := s.Store.Ping(ctx); err != nil {
 		LoggerFrom(r.Context()).Warn("health check: database unreachable", "error", err)
 		body.Status = "degraded"
 		body.Database = "unreachable"
