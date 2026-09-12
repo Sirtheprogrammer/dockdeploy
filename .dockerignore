@@ -1,0 +1,10 @@
+.git
+.github
+**/node_modules
+frontend/dist
+server/internal/web/dist/*
+!server/internal/web/dist/.gitkeep
+**/.env
+**/.env.*
+*.md
+.claude
