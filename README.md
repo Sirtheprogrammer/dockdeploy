@@ -48,12 +48,12 @@ export SESSION_SECRET=$(openssl rand -base64 32)
 ./server/cmd/dockdeploy/dockdeploy
 ```
 
-The dashboard is served on <http://localhost:8080>. The database schema automatically migrates itself on startup (both SQLite and PostgreSQL).
+The dashboard is served on <http://localhost:8081>. The database schema automatically migrates itself on startup (both SQLite and PostgreSQL).
 
 > [!IMPORTANT]
 > `APP_ENCRYPTION_KEY` seals every credential the platform stores (SSH private keys, passwords, registry credentials, env secrets, and webhook secrets). **Back it up immediately.** If lost, stored secrets cannot be decrypted and must be re-entered.
 
-By default, the container binds to `127.0.0.1:8080`. Put a reverse proxy with TLS in front of it before exposing it to the internet.
+By default, the container binds to `127.0.0.1:8081`. Put a reverse proxy with TLS in front of it before exposing it to the internet.
 
 ---
 

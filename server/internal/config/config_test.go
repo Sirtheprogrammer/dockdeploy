@@ -85,4 +85,22 @@ func TestConfigDatabaseDriver(t *testing.T) {
 			t.Errorf("expected /tmp/test.db, got %v", cfg.DatabaseURL)
 		}
 	})
+
+	t.Run("defaults port to 8081 and app url to http://localhost:8081", func(t *testing.T) {
+		t.Setenv("APP_ENCRYPTION_KEY", key)
+		t.Setenv("SESSION_SECRET", key)
+		t.Setenv("PORT", "")
+		t.Setenv("APP_URL", "")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		if cfg.Port != 8081 {
+			t.Errorf("expected Port 8081, got %d", cfg.Port)
+		}
+		if cfg.AppURL != "http://localhost:8081" {
+			t.Errorf("expected AppURL http://localhost:8081, got %s", cfg.AppURL)
+		}
+	})
 }

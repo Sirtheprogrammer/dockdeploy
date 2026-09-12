@@ -36,9 +36,9 @@ USER app
 WORKDIR /home/app
 COPY --from=backend /out/dockdeploy /usr/local/bin/dockdeploy
 
-ENV APP_ENV=production PORT=8080
-EXPOSE 8080
+ENV APP_ENV=production PORT=8081
+EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:8080/api/health >/dev/null || exit 1
+    CMD wget -qO- http://127.0.0.1:8081/api/health >/dev/null || exit 1
 
 ENTRYPOINT ["dockdeploy"]

@@ -10,8 +10,8 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-production}
-      APP_URL: ${APP_URL:-http://localhost:8080}
-      PORT: 8080
+      APP_URL: ${APP_URL:-http://localhost:8081}
+      PORT: 8081
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # SQLite is used by default when DATABASE_URL is unset.
       # Persistent storage path mapped to the dockdeploy-data volume:
@@ -21,7 +21,7 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8081}:8082"
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8081}:8081"
     volumes:
       # Persists SQLite database and application data
       - dockdeploy-data:/home/app/data

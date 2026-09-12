@@ -64,7 +64,7 @@ func Load() (*Config, error) {
 
 	cfg := &Config{
 		Env:           envOr("APP_ENV", "development"),
-		AppURL:        strings.TrimRight(envOr("APP_URL", "http://localhost:8080"), "/"),
+		AppURL:        strings.TrimRight(envOr("APP_URL", "http://localhost:8081"), "/"),
 		ShutdownGrace: 30 * time.Second,
 
 		DeployRemoteRoot:  envOr("DEPLOY_REMOTE_ROOT", ".dockdeploy/apps"),
@@ -120,7 +120,7 @@ func Load() (*Config, error) {
 		note("APP_ENV must be 'development' or 'production', got %q", cfg.Env)
 	}
 
-	port, err := strconv.Atoi(envOr("PORT", "8080"))
+	port, err := strconv.Atoi(envOr("PORT", "8081"))
 	if err != nil || port < 1 || port > 65535 {
 		note("PORT must be a number between 1 and 65535, got %q", os.Getenv("PORT"))
 	}

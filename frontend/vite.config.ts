@@ -13,7 +13,7 @@ export default defineConfig({
     // so session cookies behave exactly as they do in production.
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8081',
         changeOrigin: true,
         ws: true,
       },
