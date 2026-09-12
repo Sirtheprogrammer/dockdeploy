@@ -79,26 +79,7 @@ type ServerMetrics struct {
 	Docker       DockerMetrics `json:"docker"`
 }
 
-const metricsCollectorScript = `cat << 'DD_METRICS_EOF' | sh
-echo "===SECTION:LOADAVG==="
-cat /proc/loadavg 2>/dev/null || true
-echo "===SECTION:MEMINFO==="
-cat /proc/meminfo 2>/dev/null || true
-echo "===SECTION:UPTIME==="
-cat /proc/uptime 2>/dev/null || true
-echo "===SECTION:DF==="
-df -kP / 2>/dev/null || true
-echo "===SECTION:STAT==="
-grep '^cpu ' /proc/stat 2>/dev/null || true
-echo "===SECTION:NPROC==="
-nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || true
-echo "===SECTION:HOSTNAME==="
-hostname 2>/dev/null || true
-echo "===SECTION:UNAME==="
-uname -sr 2>/dev/null || true
-echo "===SECTION:OS==="
-. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || uname -s 2>/dev/null || true
-DD_METRICS_EOF`
+const metricsCollectorScript = `echo "===SECTION:LOADAVG==="; cat /proc/loadavg 2>/dev/null || true; echo "===SECTION:MEMINFO==="; cat /proc/meminfo 2>/dev/null || true; echo "===SECTION:UPTIME==="; cat /proc/uptime 2>/dev/null || true; echo "===SECTION:DF==="; df -kP / 2>/dev/null || true; echo "===SECTION:STAT==="; grep '^cpu ' /proc/stat 2>/dev/null || true; echo "===SECTION:NPROC==="; nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || true; echo "===SECTION:HOSTNAME==="; hostname 2>/dev/null || true; echo "===SECTION:UNAME==="; uname -sr 2>/dev/null || true; echo "===SECTION:OS==="; (. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME") || uname -s 2>/dev/null || true`
 
 // Metrics collects real-time health measurements, hardware utilization, and docker metrics from the server.
 func (m *Manager) Metrics(ctx context.Context, server *store.Server) (*ServerMetrics, error) {
@@ -159,9 +140,10 @@ func (m *Manager) populateDockerMetrics(ctx context.Context, conn *sshx.Conn, se
 
 func parseRawMetrics(output string) *ServerMetrics {
 	metrics := &ServerMetrics{
-		Health: HealthHealthy,
-		CPU:    CPUMetrics{Cores: 1},
-		Disk:   DiskMetrics{Mount: "/"},
+		Health:       HealthHealthy,
+		HealthIssues: []string{},
+		CPU:          CPUMetrics{Cores: 1},
+		Disk:         DiskMetrics{Mount: "/"},
 	}
 
 	sections := make(map[string]string)
@@ -381,6 +363,9 @@ func evaluateHealth(metrics *ServerMetrics) {
 	// Combine issues
 	metrics.HealthIssues = append(metrics.HealthIssues, criticalIssues...)
 	metrics.HealthIssues = append(metrics.HealthIssues, warningIssues...)
+	if metrics.HealthIssues == nil {
+		metrics.HealthIssues = []string{}
+	}
 
 	if len(criticalIssues) > 0 || (metrics.Docker.Status == "unavailable") {
 		metrics.Health = HealthCritical

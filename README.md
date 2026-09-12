@@ -204,6 +204,24 @@ npm run build
 
 ---
 
+## CI / CD Automated Deployment
+
+dockdeploy includes a GitHub Actions workflow ([`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)) that automatically tests, connects to your hosting server over SSH, navigates to `~/dockdeploy`, pulls the latest code from `main`, and rebuilds the container:
+
+### GitHub Repository Secrets
+To enable automatic deployment on push to `main`, configure these repository secrets in **Settings &rarr; Secrets and variables &rarr; Actions**:
+
+| Secret | Description | Example |
+| :--- | :--- | :--- |
+| `SSH_HOST` | Hostname or IP address of your server | `192.0.2.1` or `dockdeploy.example.com` |
+| `SSH_USER` | SSH username with Docker privileges | `ubuntu` or `deploy` |
+| `SSH_KEY` | Private SSH key for authentication | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+| `SSH_PORT` | *(Optional)* SSH port (default: 22) | `22` |
+| `SSH_PASSPHRASE`| *(Optional)* Passphrase if your private key is encrypted | |
+| `DEPLOY_DIR` | *(Optional)* Project directory on the server (default: `~/dockdeploy`) | `~/dockdeploy` |
+
+---
+
 ## Backup & Recovery
 
 A complete backup of dockdeploy requires two components:

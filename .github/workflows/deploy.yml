@@ -1,0 +1,93 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: server/go.sum
+
+      - name: Run Backend Tests
+        run: |
+          cd server
+          go test -count=1 ./...
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Lint and Build Frontend
+        run: |
+          cd frontend
+          npm run lint
+          npm run build
+
+  deploy:
+    name: Deploy to Server
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute Remote SSH Commands
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE || '' }}
+          script_stop: true
+          script: |
+            echo "=================================================="
+            echo "🚀 Starting automated deployment for dockdeploy..."
+            echo "=================================================="
+
+            TARGET_DIR="${{ secrets.DEPLOY_DIR || '~/dockdeploy' }}"
+            eval TARGET_DIR="$TARGET_DIR"
+
+            if [ ! -d "$TARGET_DIR" ]; then
+              echo "❌ Target directory '$TARGET_DIR' does not exist."
+              exit 1
+            fi
+
+            cd "$TARGET_DIR"
+            echo "📂 Working directory: $(pwd)"
+
+            echo "📥 Fetching latest changes from origin/main..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "🔨 Rebuilding and restarting containers..."
+            if docker compose version >/dev/null 2>&1; then
+              docker compose up -d --build
+            else
+              docker-compose up -d --build
+            fi
+
+            echo "🧹 Cleaning up dangling images..."
+            docker image prune -f
+
+            echo "=================================================="
+            echo "✅ Deployment completed successfully!"
+            echo "=================================================="

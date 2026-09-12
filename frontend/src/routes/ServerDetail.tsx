@@ -14,6 +14,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import { ContainerStateBadge } from '@/components/ContainerStateBadge'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CapabilityList } from '@/components/servers/CapabilityList'
@@ -176,10 +177,13 @@ export function ServerDetail() {
             />
           </TabsContent>
           <TabsContent value="metrics" className="pt-4">
-            <ServerMetricsView
-              server={server.data}
-              onLaunchTerminal={canTerminal ? () => setTerminalOpen(true) : undefined}
-            />
+            <ErrorBoundary fallbackTitle="Could not display server metrics">
+              <ServerMetricsView
+                server={server.data}
+                active={tab === 'metrics'}
+                onLaunchTerminal={canTerminal ? () => setTerminalOpen(true) : undefined}
+              />
+            </ErrorBoundary>
           </TabsContent>
           <TabsContent value="images" className="pt-4">
             <ImagesTab serverID={serverID} active={tab === 'images'} />

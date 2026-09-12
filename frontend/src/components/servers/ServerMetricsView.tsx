@@ -21,14 +21,16 @@ import { formatBytes } from '@/lib/utils'
 
 interface ServerMetricsViewProps {
   server: Server
+  active?: boolean
   onLaunchTerminal?: () => void
 }
 
-function formatUptime(seconds: number): string {
-  if (seconds <= 0) return '0m'
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor((seconds % 86400) / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
+function formatUptime(seconds: number | undefined | null): string {
+  const secs = Number(seconds || 0)
+  if (secs <= 0) return '0m'
+  const days = Math.floor(secs / 86400)
+  const hours = Math.floor((secs % 86400) / 3600)
+  const minutes = Math.floor((secs % 3600) / 60)
 
   const parts = []
   if (days > 0) parts.push(`${days}d`)
@@ -37,7 +39,12 @@ function formatUptime(seconds: number): string {
   return parts.join(' ')
 }
 
-function HealthBadge({ status }: { status: HealthStatus }) {
+function safeNumber(val: unknown, fallback = 0): number {
+  const n = Number(val)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function HealthBadge({ status }: { status?: HealthStatus | null }) {
   switch (status) {
     case 'healthy':
       return (
@@ -60,6 +67,12 @@ function HealthBadge({ status }: { status: HealthStatus }) {
           Critical
         </span>
       )
+    default:
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-500/10 px-2.5 py-1 text-xs font-medium text-zinc-400 border border-zinc-500/20">
+          Unknown
+        </span>
+      )
   }
 }
 
@@ -68,11 +81,12 @@ function ProgressBar({
   color = 'primary',
   className = '',
 }: {
-  value: number
+  value: number | undefined | null
   color?: 'primary' | 'warning' | 'danger'
   className?: string
 }) {
-  const clamped = Math.min(Math.max(value, 0), 100)
+  const val = safeNumber(value)
+  const clamped = Math.min(Math.max(val, 0), 100)
   const barColors = {
     primary: clamped >= 90 ? 'bg-red-500' : clamped >= 80 ? 'bg-amber-500' : 'bg-primary',
     warning: 'bg-amber-500',
@@ -89,13 +103,14 @@ function ProgressBar({
   )
 }
 
-export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsViewProps) {
+export function ServerMetricsView({ server, active = true, onLaunchTerminal }: ServerMetricsViewProps) {
   const [autoRefresh, setAutoRefresh] = useState(true)
-  const { data: metrics, isPending, isError, error, isFetching, refetch } = useServerMetrics(server.id, {
-    refetchInterval: autoRefresh ? 5000 : false,
+  const query = useServerMetrics(server.id, {
+    enabled: active,
+    refetchInterval: autoRefresh && active ? 5000 : false,
   })
 
-  if (isPending) {
+  if (query.isPending) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-28 w-full" />
@@ -109,13 +124,13 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
     )
   }
 
-  if (isError) {
+  if (query.isError) {
     return (
       <Alert variant="danger">
         <div className="space-y-2">
           <p className="font-semibold">Failed to collect server metrics</p>
-          <p className="text-xs">{error.message}</p>
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="mt-2">
+          <p className="text-xs">{query.error?.message || 'Could not reach server metrics endpoint.'}</p>
+          <Button variant="outline" size="sm" onClick={() => void query.refetch()} className="mt-2">
             <RefreshCw className="mr-1.5 size-3.5" />
             Try again
           </Button>
@@ -124,7 +139,15 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
     )
   }
 
-  const { cpu, memory, disk, docker, system, health, health_issues } = metrics
+  const metrics = query.data
+
+  const cpu = metrics.cpu ?? { usage_percent: 0, cores: 1, load1: 0, load5: 0, load15: 0 }
+  const memory = metrics.memory ?? { total_bytes: 0, used_bytes: 0, available_bytes: 0, used_percent: 0, swap_total_bytes: 0, swap_used_bytes: 0, swap_used_percent: 0 }
+  const disk = metrics.disk ?? { filesystem: '', mount: '/', total_bytes: 0, used_bytes: 0, free_bytes: 0, used_percent: 0 }
+  const docker = metrics.docker ?? { status: 'unavailable', server_version: '', containers_total: 0, containers_running: 0, containers_stopped: 0, images_count: 0 }
+  const system = metrics.system ?? { hostname: server.name, os: '', kernel: '', uptime_seconds: 0, server_time: '' }
+  const health: HealthStatus = metrics.health ?? 'healthy'
+  const healthIssues: string[] = Array.isArray(metrics.health_issues) ? metrics.health_issues : []
 
   return (
     <div className="space-y-6">
@@ -161,16 +184,16 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
               variant="outline"
               size="sm"
               className="text-xs h-8"
-              disabled={isFetching}
-              onClick={() => refetch()}
+              disabled={query.isFetching}
+              onClick={() => void query.refetch()}
             >
-              <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`size-3.5 ${query.isFetching ? 'animate-spin' : ''}`} />
               <span className="sr-only sm:not-sr-only sm:ml-1.5">Refresh</span>
             </Button>
           </div>
         </div>
 
-        {health_issues.length > 0 ? (
+        {healthIssues.length > 0 ? (
           <div className="border-b bg-amber-500/5 px-5 py-3">
             <div className="space-y-1">
               <p className="text-xs font-medium text-amber-500 flex items-center gap-1.5">
@@ -178,7 +201,7 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
                 Detected Issues & Recommendations:
               </p>
               <ul className="list-disc list-inside space-y-0.5 text-xs text-muted-foreground pl-1">
-                {health_issues.map((issue, idx) => (
+                {healthIssues.map((issue, idx) => (
                   <li key={idx}>{issue}</li>
                 ))}
               </ul>
@@ -197,11 +220,11 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
           </div>
           <div>
             <span className="font-medium text-foreground">Active Containers: </span>
-            <span>{docker.containers_running} running / {docker.containers_total} total</span>
+            <span>{safeNumber(docker.containers_running)} running / {safeNumber(docker.containers_total)} total</span>
           </div>
           <div>
             <span className="font-medium text-foreground">Metrics Timestamp: </span>
-            <span>{new Date(metrics.collected_at).toLocaleTimeString()}</span>
+            <span>{metrics.collected_at ? new Date(metrics.collected_at).toLocaleTimeString() : '—'}</span>
           </div>
         </CardContent>
       </Card>
@@ -218,13 +241,13 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-bold tracking-tight">{cpu.usage_percent}%</span>
-              <span className="text-xs text-muted-foreground">{cpu.cores} CPU {cpu.cores === 1 ? 'core' : 'cores'}</span>
+              <span className="text-2xl font-bold tracking-tight">{safeNumber(cpu.usage_percent).toFixed(1)}%</span>
+              <span className="text-xs text-muted-foreground">{safeNumber(cpu.cores, 1)} CPU {safeNumber(cpu.cores, 1) === 1 ? 'core' : 'cores'}</span>
             </div>
             <ProgressBar value={cpu.usage_percent} />
             <div className="pt-1 border-t text-[11px] text-muted-foreground flex justify-between font-mono">
               <span>Load:</span>
-              <span>{cpu.load1.toFixed(2)} (1m) &middot; {cpu.load5.toFixed(2)} (5m) &middot; {cpu.load15.toFixed(2)} (15m)</span>
+              <span>{safeNumber(cpu.load1).toFixed(2)} (1m) &middot; {safeNumber(cpu.load5).toFixed(2)} (5m) &middot; {safeNumber(cpu.load15).toFixed(2)} (15m)</span>
             </div>
           </CardContent>
         </Card>
@@ -239,16 +262,16 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-bold tracking-tight">{memory.used_percent}%</span>
+              <span className="text-2xl font-bold tracking-tight">{safeNumber(memory.used_percent).toFixed(1)}%</span>
               <span className="text-xs text-muted-foreground">
-                {formatBytes(memory.used_bytes)} / {formatBytes(memory.total_bytes)}
+                {formatBytes(safeNumber(memory.used_bytes))} / {formatBytes(safeNumber(memory.total_bytes))}
               </span>
             </div>
             <ProgressBar value={memory.used_percent} />
             <div className="pt-1 border-t text-[11px] text-muted-foreground flex justify-between font-mono">
-              <span>Available: {formatBytes(memory.available_bytes)}</span>
-              {memory.swap_total_bytes > 0 ? (
-                <span>Swap: {memory.swap_used_percent}%</span>
+              <span>Available: {formatBytes(safeNumber(memory.available_bytes))}</span>
+              {safeNumber(memory.swap_total_bytes) > 0 ? (
+                <span>Swap: {safeNumber(memory.swap_used_percent).toFixed(1)}%</span>
               ) : null}
             </div>
           </CardContent>
@@ -264,15 +287,15 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-bold tracking-tight">{disk.used_percent}%</span>
+              <span className="text-2xl font-bold tracking-tight">{safeNumber(disk.used_percent).toFixed(1)}%</span>
               <span className="text-xs text-muted-foreground">
-                {formatBytes(disk.used_bytes)} / {formatBytes(disk.total_bytes)}
+                {formatBytes(safeNumber(disk.used_bytes))} / {formatBytes(safeNumber(disk.total_bytes))}
               </span>
             </div>
             <ProgressBar value={disk.used_percent} />
             <div className="pt-1 border-t text-[11px] text-muted-foreground flex justify-between font-mono truncate">
-              <span>Mount: {disk.mount}</span>
-              <span>Free: {formatBytes(disk.free_bytes)}</span>
+              <span>Mount: {disk.mount || '/'}</span>
+              <span>Free: {formatBytes(safeNumber(disk.free_bytes))}</span>
             </div>
           </CardContent>
         </Card>
@@ -303,9 +326,9 @@ export function ServerMetricsView({ server, onLaunchTerminal }: ServerMetricsVie
               />
             </div>
             <div className="pt-1 border-t text-[11px] text-muted-foreground flex justify-between font-mono">
-              <span>{docker.containers_running} active</span>
-              <span>{docker.containers_stopped} stopped</span>
-              <span>{docker.images_count} images</span>
+              <span>{safeNumber(docker.containers_running)} active</span>
+              <span>{safeNumber(docker.containers_stopped)} stopped</span>
+              <span>{safeNumber(docker.images_count)} images</span>
             </div>
           </CardContent>
         </Card>
