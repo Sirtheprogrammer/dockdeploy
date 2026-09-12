@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -495,4 +496,12 @@ func (s *Store) SecretEnvValues(ctx context.Context, sealer Sealer, deploymentID
 		}
 	}
 	return values, wrap("store: secret env keys", rows.Err())
+}
+
+// DeploymentWebhookSecret decrypts the webhook secret for push-to-deploy triggers.
+func (s *Store) DeploymentWebhookSecret(ctx context.Context, sealer Sealer, deployment *Deployment) (string, error) {
+	if deployment.WebhookSecretID == nil {
+		return "", errors.New("deployment has no webhook secret")
+	}
+	return s.openSecret(ctx, sealer, deployment.WebhookSecretID)
 }

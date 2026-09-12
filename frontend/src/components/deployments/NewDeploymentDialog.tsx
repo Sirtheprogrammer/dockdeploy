@@ -27,6 +27,8 @@ import { Textarea } from '@/components/ui/textarea'
 import {
   useCreateDeployment,
   useGitCredentials,
+  useRegistries,
+  type BuildStrategy,
   type EnvVar,
   type SourceType,
 } from '@/lib/deployments'
@@ -84,10 +86,14 @@ export function NewDeploymentDialog({ trigger }: { trigger?: ReactNode }) {
   const [composeContent, setComposeContent] = useState(SAMPLE_COMPOSE)
   const [imageRef, setImageRef] = useState('')
   const [containerPort, setContainerPort] = useState('80')
+  const [buildStrategy, setBuildStrategy] = useState<BuildStrategy>('remote')
+  const [registryID, setRegistryID] = useState('')
+  const [imageName, setImageName] = useState('')
   const [envText, setEnvText] = useState('')
 
   const servers = useServers()
   const credentials = useGitCredentials(open)
+  const registries = useRegistries(open)
   const create = useCreateDeployment()
 
   const usesGit = source === 'git_dockerfile' || source === 'git_compose'
@@ -109,6 +115,9 @@ export function NewDeploymentDialog({ trigger }: { trigger?: ReactNode }) {
     setComposeContent(SAMPLE_COMPOSE)
     setImageRef('')
     setContainerPort('80')
+    setBuildStrategy('remote')
+    setRegistryID('')
+    setImageName('')
     setEnvText('')
     create.reset()
   }
@@ -143,7 +152,9 @@ export function NewDeploymentDialog({ trigger }: { trigger?: ReactNode }) {
         server_id: serverID,
         name,
         source_type: source,
-        build_strategy: 'remote',
+        build_strategy: source === 'git_dockerfile' ? buildStrategy : 'remote',
+        registry_id: source === 'git_dockerfile' && buildStrategy === 'registry' && registryID ? registryID : undefined,
+        image_name: source === 'git_dockerfile' && buildStrategy === 'registry' && imageName ? imageName : undefined,
         repo_url: usesGit ? repoURL : undefined,
         git_ref: usesGit ? gitRef : undefined,
         git_credential_id: usesGit && credentialID ? credentialID : null,
@@ -324,24 +335,96 @@ export function NewDeploymentDialog({ trigger }: { trigger?: ReactNode }) {
           ) : null}
 
           {source === 'git_dockerfile' ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="deploy-dockerfile">Dockerfile path</Label>
-                <Input
-                  id="deploy-dockerfile"
-                  value={dockerfilePath}
-                  onChange={(e) => setDockerfilePath(e.target.value)}
-                  className="font-mono text-xs"
-                />
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="deploy-dockerfile">Dockerfile path</Label>
+                  <Input
+                    id="deploy-dockerfile"
+                    value={dockerfilePath}
+                    onChange={(e) => setDockerfilePath(e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="deploy-context">Build context</Label>
+                  <Input
+                    id="deploy-context"
+                    value={buildContext}
+                    onChange={(e) => setBuildContext(e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="deploy-context">Build context</Label>
-                <Input
-                  id="deploy-context"
-                  value={buildContext}
-                  onChange={(e) => setBuildContext(e.target.value)}
-                  className="font-mono text-xs"
-                />
+
+              <div className="space-y-2 rounded-lg border p-3 bg-muted/20">
+                <Label className="text-xs font-semibold">Build Strategy</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBuildStrategy('remote')}
+                    className={cn(
+                      'rounded-md border p-2.5 text-left text-xs transition-colors',
+                      buildStrategy === 'remote'
+                        ? 'border-primary bg-primary/10 font-medium'
+                        : 'hover:bg-accent/40 text-muted-foreground',
+                    )}
+                  >
+                    <span className="block font-medium text-foreground">Remote build</span>
+                    <span>Clone & build on the target server. No registry needed.</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setBuildStrategy('registry')}
+                    className={cn(
+                      'rounded-md border p-2.5 text-left text-xs transition-colors',
+                      buildStrategy === 'registry'
+                        ? 'border-primary bg-primary/10 font-medium'
+                        : 'hover:bg-accent/40 text-muted-foreground',
+                    )}
+                  >
+                    <span className="block font-medium text-foreground">Registry build</span>
+                    <span>Build on controller & push to registry. Target pulls image.</span>
+                  </button>
+                </div>
+
+                {buildStrategy === 'registry' ? (
+                  <div className="pt-2 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="deploy-registry">Container Registry</Label>
+                      <Select value={registryID} onValueChange={setRegistryID} required>
+                        <SelectTrigger id="deploy-registry">
+                          <SelectValue placeholder="Choose a registry..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {registries.data?.map((r) => (
+                            <SelectItem key={r.id} value={r.id}>
+                              {r.name} ({r.url})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FieldError message={errors.registry_id} />
+                      {registries.data?.length === 0 ? (
+                        <p className="text-muted-foreground text-xs">
+                          No registries configured. Add one under Settings &rarr; Registries first.
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="deploy-image-name">Custom Image Name (optional)</Label>
+                      <Input
+                        id="deploy-image-name"
+                        value={imageName}
+                        onChange={(e) => setImageName(e.target.value)}
+                        placeholder="e.g. registry.hub.docker.com/myorg/myapp"
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}

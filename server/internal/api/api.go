@@ -12,6 +12,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
@@ -30,6 +31,8 @@ type Server struct {
 	Servers *servers.Manager
 	// Deploys owns the build pipeline and the live log hub.
 	Deploys *deploy.Engine
+	// Nginx manages virtual hosts, TLS certificates and reloads.
+	Nginx *nginxx.Manager
 
 	// SPA serves the built frontend. Requests that do not match /api are
 	// handed here, so the controller runs as a single container.
@@ -62,11 +65,13 @@ func (s *Server) Routes() (http.Handler, error) {
 
 	root.group("/api", func(api routes) {
 		api.router.Use(s.authenticate)
+		api.router.Use(s.csrfProtect)
 		api.router.Use(s.auditWrites)
 
 		api.open(http.MethodGet, "/health", s.handleHealth)
 
 		api.group("/auth", func(a routes) {
+			a.router.Use(s.rateLimitAuth)
 			a.open(http.MethodGet, "/setup", s.handleSetupStatus)
 			a.open(http.MethodPost, "/setup", s.handleSetup)
 			a.open(http.MethodPost, "/login", s.handleLogin)
@@ -142,6 +147,18 @@ func (s *Server) Routes() (http.Handler, error) {
 			d.guarded(http.MethodPost, "/{deploymentID}/runs", auth.PermDeploymentDeploy, s.handleDeploy)
 			d.guarded(http.MethodGet, "/{deploymentID}/runs/{runID}/logs", auth.PermDeploymentRead, s.handleRunLogs)
 			d.guarded(http.MethodPost, "/{deploymentID}/runs/{runID}/cancel", auth.PermDeploymentDeploy, s.handleCancelRun)
+
+			d.guarded(http.MethodGet, "/{deploymentID}/webhook", auth.PermDeploymentRead, s.handleGetDeploymentWebhook)
+			d.open(http.MethodPost, "/{deploymentID}/webhook", s.handleTriggerWebhook)
+		})
+
+		api.group("/domains", func(dm routes) {
+			dm.guarded(http.MethodGet, "/", auth.PermDomainRead, s.handleListDomains)
+			dm.guarded(http.MethodPost, "/", auth.PermDomainWrite, s.handleCreateDomain)
+			dm.guarded(http.MethodGet, "/{domainID}", auth.PermDomainRead, s.handleGetDomain)
+			dm.guarded(http.MethodDelete, "/{domainID}", auth.PermDomainWrite, s.handleDeleteDomain)
+			dm.guarded(http.MethodPost, "/{domainID}/ssl", auth.PermDomainWrite, s.handleIssueSSL)
+			dm.guarded(http.MethodPost, "/{domainID}/sync", auth.PermDomainWrite, s.handleSyncDomain)
 		})
 
 		// Registry and git credentials are shared infrastructure, so they need

@@ -59,22 +59,37 @@ const runColumns = `id, deployment_id, number, trigger, status,
 	commit_sha, image_ref, error, triggered_by,
 	queued_at, started_at, finished_at, locked_at, locked_by`
 
+// EnqueueRunParams specifies all optional and required parameters to enqueue a run.
+type EnqueueRunParams struct {
+	DeploymentID string
+	Trigger      RunTrigger
+	TriggeredBy  *string
+	CommitSHA    string
+	ImageRef     string
+}
+
 // EnqueueRun creates a queued run and wakes a worker.
-//
-// The run number is allocated inside the transaction from the current maximum,
-// so two concurrent deploys of the same application cannot both become run 8.
 func (s *Store) EnqueueRun(ctx context.Context, deploymentID string, trigger RunTrigger, triggeredBy *string) (*Run, error) {
+	return s.EnqueueRunWithParams(ctx, EnqueueRunParams{
+		DeploymentID: deploymentID,
+		Trigger:      trigger,
+		TriggeredBy:  triggeredBy,
+	})
+}
+
+// EnqueueRunWithParams creates a queued run with optional image_ref or commit_sha (e.g. for rollback) and wakes a worker.
+func (s *Store) EnqueueRunWithParams(ctx context.Context, params EnqueueRunParams) (*Run, error) {
 	var run *Run
 
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			INSERT INTO deployment_runs (deployment_id, number, trigger, triggered_by)
+			INSERT INTO deployment_runs (deployment_id, number, trigger, triggered_by, commit_sha, image_ref)
 			VALUES (
 				$1,
 				(SELECT COALESCE(max(number), 0) + 1 FROM deployment_runs WHERE deployment_id = $1),
-				$2, $3
+				$2, $3, $4, $5
 			)
-			RETURNING `+runColumns, deploymentID, trigger, triggeredBy)
+			RETURNING `+runColumns, params.DeploymentID, params.Trigger, params.TriggeredBy, params.CommitSHA, params.ImageRef)
 		if err != nil {
 			return wrap("store: enqueue run", err)
 		}

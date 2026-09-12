@@ -129,6 +129,7 @@ func TestProductionRoutesAreFullyGuarded(t *testing.T) {
 		"POST /api/auth/login":                      true,
 		"GET /api/auth/invitations/{token}":         true,
 		"POST /api/auth/invitations/{token}/accept": true,
+		"POST /api/deployments/{deploymentID}/webhook": true,
 	}
 	for key, p := range s.policies {
 		if p.public && !wantPublic[key] {

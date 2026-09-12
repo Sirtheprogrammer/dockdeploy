@@ -50,19 +50,41 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	trigger := store.TriggerManual
-	if req.Rollback != "" {
-		trigger = store.TriggerRollback
-	}
-
 	actor := MustIdentity(r.Context())
+	trigger := store.TriggerManual
 	if actor.ViaToken() {
 		trigger = store.TriggerAPI
 	}
 
-	run, err := s.Store.EnqueueRun(r.Context(), deployment.ID, trigger, &actor.User.ID)
-	if err != nil {
-		return Internal(err)
+	var run *store.Run
+	if req.Rollback != "" {
+		targetRun, err := s.Store.RunByID(r.Context(), req.Rollback)
+		if err != nil || targetRun.DeploymentID != deployment.ID {
+			return NotFound("No such run to roll back to.")
+		}
+		if targetRun.Status != store.RunSucceeded {
+			return Invalid(fields{"rollback_run_id": "Can only roll back to a succeeded run."})
+		}
+		if targetRun.ImageRef == "" {
+			return Invalid(fields{"rollback_run_id": "Selected run does not have a saved image."})
+		}
+		trigger = store.TriggerRollback
+		run, err = s.Store.EnqueueRunWithParams(r.Context(), store.EnqueueRunParams{
+			DeploymentID: deployment.ID,
+			Trigger:      trigger,
+			TriggeredBy:  &actor.User.ID,
+			CommitSHA:    targetRun.CommitSHA,
+			ImageRef:     targetRun.ImageRef,
+		})
+		if err != nil {
+			return Internal(err)
+		}
+	} else {
+		var err error
+		run, err = s.Store.EnqueueRun(r.Context(), deployment.ID, trigger, &actor.User.ID)
+		if err != nil {
+			return Internal(err)
+		}
 	}
 
 	AuditResource(r.Context(), "deployments", deployment.ID)

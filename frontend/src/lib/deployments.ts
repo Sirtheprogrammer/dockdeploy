@@ -103,6 +103,8 @@ export interface CreateDeploymentInput {
   compose_content?: string
   image_ref?: string
   build_strategy: BuildStrategy
+  registry_id?: string | null
+  image_name?: string
   container_port?: number
   env?: EnvVar[]
 }
@@ -143,12 +145,25 @@ export function useRuns(deploymentID: string, live: boolean) {
 
 export function useDeploy(deploymentID: string) {
   const queryClient = useQueryClient()
-  return useMutation<Run, ApiError, void>({
-    mutationFn: () => api.post<Run>(`/deployments/${deploymentID}/runs`, {}),
+  return useMutation<Run, ApiError, { rollback_run_id?: string } | void>({
+    mutationFn: (variables) => api.post<Run>(`/deployments/${deploymentID}/runs`, variables ?? {}),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: runsKey(deploymentID) })
       void queryClient.invalidateQueries({ queryKey: deploymentKey(deploymentID) })
     },
+  })
+}
+
+export interface WebhookInfo {
+  webhook_url: string
+  webhook_secret: string
+}
+
+export function useDeploymentWebhook(deploymentID: string) {
+  return useQuery<WebhookInfo, ApiError>({
+    queryKey: ['deployments', deploymentID, 'webhook'],
+    queryFn: ({ signal }) => api.get<WebhookInfo>(`/deployments/${deploymentID}/webhook`, { signal }),
+    enabled: deploymentID !== '',
   })
 }
 

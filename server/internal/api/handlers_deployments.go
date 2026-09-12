@@ -1,7 +1,12 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -153,13 +158,17 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 		f.add("build_strategy", "Choose either remote or registry.")
 	}
 
-	// Rejected at creation rather than at deploy time. The build pipeline for
-	// this strategy is not written yet, and letting someone configure a
-	// deployment that can only ever fail is worse than saying so now.
 	if strategy == store.BuildRegistry {
-		f.add("build_strategy",
-			"Building here and pushing to a registry is not available yet. "+
-				"Use a remote build, which clones and builds on the target server and needs no registry.")
+		if req.RegistryID == nil || *req.RegistryID == "" {
+			f.add("registry_id", "A container registry is required for controller builds.")
+		} else {
+			if _, err := s.Store.RegistryByID(r.Context(), *req.RegistryID); err != nil {
+				f.add("registry_id", "Choose a valid registry.")
+			}
+		}
+		if !source.NeedsGit() {
+			f.add("build_strategy", "Registry builds require a git repository source.")
+		}
 	}
 
 	switch source {
@@ -359,3 +368,92 @@ func (s *Server) handleSetDeploymentEnv(w http.ResponseWriter, r *http.Request) 
 
 	return NoContent(w)
 }
+
+func (s *Server) handleGetDeploymentWebhook(w http.ResponseWriter, r *http.Request) error {
+	deployment, _, err := s.requireDeployment(r)
+	if err != nil {
+		return err
+	}
+
+	secret, err := s.Store.DeploymentWebhookSecret(r.Context(), s.Sealer, deployment)
+	if err != nil {
+		return Internal(err)
+	}
+
+	appURL := strings.TrimRight(s.Config.AppURL, "/")
+	webhookURL := fmt.Sprintf("%s/api/deployments/%s/webhook", appURL, deployment.ID)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]string{
+		"webhook_url":    webhookURL,
+		"webhook_secret": secret,
+	})
+}
+
+// handleTriggerWebhook handles incoming push-to-deploy webhooks from GitHub, GitLab, or curl.
+func (s *Server) handleTriggerWebhook(w http.ResponseWriter, r *http.Request) error {
+	deploymentID := chi.URLParam(r, "deploymentID")
+	deployment, err := s.Store.DeploymentByID(r.Context(), deploymentID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return NotFound("Deployment not found.")
+		}
+		return Internal(err)
+	}
+
+	secret, err := s.Store.DeploymentWebhookSecret(r.Context(), s.Sealer, deployment)
+	if err != nil {
+		return Internal(err)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return BadRequest("Failed to read payload.")
+	}
+
+	// Verify authentication
+	authenticated := false
+
+	// 1. GitHub HMAC-SHA256 signature
+	if ghSig := r.Header.Get("X-Hub-Signature-256"); ghSig != "" {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write(body)
+		expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		if hmac.Equal([]byte(ghSig), []byte(expected)) {
+			authenticated = true
+		}
+	}
+
+	// 2. Direct token in headers
+	if !authenticated {
+		if token := r.Header.Get("X-Dockdeploy-Token"); token != "" && token == secret {
+			authenticated = true
+		} else if token := r.Header.Get("X-Gitlab-Token"); token != "" && token == secret {
+			authenticated = true
+		} else if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") && strings.TrimPrefix(auth, "Bearer ") == secret {
+			authenticated = true
+		}
+	}
+
+	// 3. Query parameter ?token=
+	if !authenticated {
+		if token := r.URL.Query().Get("token"); token != "" && token == secret {
+			authenticated = true
+		}
+	}
+
+	if !authenticated {
+		return Unauthorized("Invalid webhook signature or token.")
+	}
+
+	// Enqueue run triggered by webhook
+	run, err := s.Store.EnqueueRun(r.Context(), deployment.ID, store.TriggerWebhook, nil)
+	if err != nil {
+		return Internal(err)
+	}
+
+	s.Log.Info("deploy queued via webhook",
+		"deployment", deployment.Name, "run", run.Number)
+
+	return JSON(w, s.Log, http.StatusAccepted, run)
+}
+

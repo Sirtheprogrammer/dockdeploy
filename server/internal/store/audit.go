@@ -70,3 +70,14 @@ func (s *Store) ListAudit(ctx context.Context, f AuditFilter) ([]AuditEntry, err
 	entries, err := pgx.CollectRows(rows, pgx.RowToStructByName[AuditEntry])
 	return entries, wrap("store: list audit", err)
 }
+
+// PurgeOldAuditLogs removes audit entries older than the retention period.
+func (s *Store) PurgeOldAuditLogs(ctx context.Context, olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_log WHERE created_at < $1`, cutoff)
+	if err != nil {
+		return 0, wrap("store: purge audit logs", err)
+	}
+	return tag.RowsAffected(), nil
+}
+

@@ -1,12 +1,25 @@
-import { Activity, Database, Server, Timer } from 'lucide-react'
+import {
+  Activity,
+  ArrowUpRight,
+  Database,
+  Globe,
+  Layers,
+  Server,
+  Timer,
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { Link } from 'react-router'
 
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useHealth } from '@/hooks/useHealth'
+import { useDeployments } from '@/lib/deployments'
+import { useDomains } from '@/lib/domains'
+import { useServers } from '@/lib/servers'
 
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400)
@@ -45,7 +58,17 @@ function Stat({
 
 export function Overview() {
   const { data, isPending, isError } = useHealth()
+  const serversQuery = useServers()
+  const deploymentsQuery = useDeployments()
+  const domainsQuery = useDomains()
+
   const reachable = !isError && data !== undefined
+  const servers = serversQuery.data ?? []
+  const deployments = deploymentsQuery.data ?? []
+  const domains = domainsQuery.data ?? []
+
+  const runningDeployments = deployments.filter((d) => d.status === 'running').length
+  const activeDomains = domains.filter((d) => d.status === 'active').length
 
   return (
     <>
@@ -94,23 +117,116 @@ export function Overview() {
           />
         </div>
 
-        <Card className="border-primary/20 bg-primary/[0.035]">
-          <CardHeader>
-            <CardTitle>Getting started</CardTitle>
-          </CardHeader>
-          <CardContent className="text-muted-foreground space-y-4 text-sm leading-6">
-            <p>
-              This instance is running but has nothing to manage yet. Connect a server over SSH and
-              dockdeploy will discover the containers already running on it.
-            </p>
-            <ol className="text-foreground/80 list-inside list-decimal space-y-2">
-              <li>Add a server with its SSH credentials and verify the host key.</li>
-              <li>Review the containers dockdeploy finds there.</li>
-              <li>Create a deployment from a git repository or a compose file.</li>
-              <li>Point a domain at it and issue a certificate.</li>
-            </ol>
-          </CardContent>
-        </Card>
+        <div>
+          <h2 className="text-base font-semibold mb-3">Managed Resources</h2>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Card>
+              <CardHeader className="flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">Servers</CardTitle>
+                <Server className="size-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {serversQuery.isLoading ? (
+                  <Skeleton className="h-8 w-16" />
+                ) : (
+                  <div className="text-2xl font-bold">{servers.length}</div>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Connected via agentless SSH
+                </p>
+                <div className="mt-4">
+                  <Button asChild variant="outline" size="sm" className="w-full">
+                    <Link to="/servers" className="flex items-center justify-center gap-1">
+                      Manage servers <ArrowUpRight className="size-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">Deployments</CardTitle>
+                <Layers className="size-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {deploymentsQuery.isLoading ? (
+                  <Skeleton className="h-8 w-16" />
+                ) : (
+                  <div className="text-2xl font-bold">
+                    {deployments.length}
+                    {deployments.length > 0 ? (
+                      <span className="text-xs font-normal text-muted-foreground ml-2">
+                        ({runningDeployments} running)
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Git repositories & Docker compose apps
+                </p>
+                <div className="mt-4">
+                  <Button asChild variant="outline" size="sm" className="w-full">
+                    <Link to="/deployments" className="flex items-center justify-center gap-1">
+                      View deployments <ArrowUpRight className="size-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">Domains</CardTitle>
+                <Globe className="size-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {domainsQuery.isLoading ? (
+                  <Skeleton className="h-8 w-16" />
+                ) : (
+                  <div className="text-2xl font-bold">
+                    {domains.length}
+                    {domains.length > 0 ? (
+                      <span className="text-xs font-normal text-muted-foreground ml-2">
+                        ({activeDomains} active)
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  Nginx virtual hosts & Let's Encrypt TLS
+                </p>
+                <div className="mt-4">
+                  <Button asChild variant="outline" size="sm" className="w-full">
+                    <Link to="/domains" className="flex items-center justify-center gap-1">
+                      Configure domains <ArrowUpRight className="size-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        {servers.length === 0 && !serversQuery.isLoading ? (
+          <Card className="border-primary/20 bg-primary/[0.035]">
+            <CardHeader>
+              <CardTitle>Getting started</CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground space-y-4 text-sm leading-6">
+              <p>
+                This instance is running but has nothing to manage yet. Connect a server over SSH and
+                dockdeploy will discover the containers already running on it.
+              </p>
+              <ol className="text-foreground/80 list-inside list-decimal space-y-2">
+                <li>Add a server with its SSH credentials and verify the host key.</li>
+                <li>Review the containers dockdeploy finds there.</li>
+                <li>Create a deployment from a git repository or a compose file.</li>
+                <li>Point a domain at it and issue a certificate.</li>
+              </ol>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </>
   )

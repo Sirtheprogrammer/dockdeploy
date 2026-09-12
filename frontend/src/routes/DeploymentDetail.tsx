@@ -1,13 +1,35 @@
-import { ExternalLink, Loader2, Rocket, Save, Trash2 } from 'lucide-react'
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  FileCode,
+  Globe,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Rocket,
+  RotateCcw,
+  Save,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 
+import { AddDomainDialog } from '@/components/domains/AddDomainDialog'
+import { ViewConfigDialog } from '@/components/domains/ViewConfigDialog'
 import { RunLogViewer } from '@/components/deployments/RunLogViewer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -21,13 +43,21 @@ import {
   useDeployment,
   useDeploymentEnv,
   useDeleteDeployment,
+  useDeploymentWebhook,
   useRuns,
   useSetDeploymentEnv,
   type EnvVar,
   type Run,
 } from '@/lib/deployments'
+import {
+  useDeleteDomain,
+  useDomains,
+  useIssueSSL,
+  useSyncDomain,
+  type Domain,
+} from '@/lib/domains'
 import { can, useSession } from '@/lib/session'
-import { formatRelative } from '@/lib/utils'
+import { formatExpiration, formatRelative } from '@/lib/utils'
 
 function RunStatusBadge({ status }: { status: Run['status'] }) {
   switch (status) {
@@ -69,6 +99,7 @@ export function DeploymentDetail() {
   const canDeploy = can(user, 'deployment:deploy')
   const canWrite = can(user, 'deployment:write')
   const canDelete = can(user, 'deployment:delete')
+  const canDomainWrite = can(user, 'domain:write')
 
   if (deployment.isPending) {
     return (
@@ -115,7 +146,7 @@ export function DeploymentDetail() {
                 ) : (
                   <Rocket aria-hidden />
                 )}
-                {live ? 'Deploying' : 'Deploy'}
+                {live ? 'Deploying' : runs.data && runs.data.length > 0 ? 'Redeploy' : 'Deploy'}
               </Button>
             ) : null}
             {canDelete ? (
@@ -177,6 +208,8 @@ export function DeploymentDetail() {
           <TabsList>
             <TabsTrigger value="activity">Activity</TabsTrigger>
             <TabsTrigger value="environment">Environment</TabsTrigger>
+            <TabsTrigger value="domains">Domains</TabsTrigger>
+            <TabsTrigger value="webhook">Push to Deploy</TabsTrigger>
             <TabsTrigger value="config">Configuration</TabsTrigger>
           </TabsList>
 
@@ -235,6 +268,7 @@ export function DeploymentDetail() {
                         <TableHead>Image</TableHead>
                         <TableHead>Took</TableHead>
                         <TableHead className="text-right">When</TableHead>
+                        <TableHead className="w-24 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -253,12 +287,37 @@ export function DeploymentDetail() {
                           <TableCell className="font-mono text-xs">
                             {run.commit_sha ? run.commit_sha.slice(0, 8) : '—'}
                           </TableCell>
-                          <TableCell className="text-muted-foreground truncate font-mono text-xs">
+                          <TableCell className="text-muted-foreground max-w-[12rem] truncate font-mono text-xs">
                             {run.image_ref || '—'}
                           </TableCell>
                           <TableCell className="tabular text-sm">{duration(run)}</TableCell>
                           <TableCell className="text-muted-foreground text-right text-sm">
                             {formatRelative(run.queued_at)}
+                          </TableCell>
+                          <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                            {run.status === 'succeeded' && canDeploy ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs"
+                                disabled={deploy.isPending || Boolean(live)}
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      `Rollback to Run #${run.number}?\n\nThis will re-deploy image:\n${run.image_ref || '(captured from run #' + run.number + ')'}`,
+                                    )
+                                  ) {
+                                    deploy.mutate(
+                                      { rollback_run_id: run.id },
+                                      { onSuccess: (newRun) => setSelectedRunID(newRun.id) },
+                                    )
+                                  }
+                                }}
+                              >
+                                <RotateCcw className="size-3" aria-hidden />
+                                Rollback
+                              </Button>
+                            ) : null}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -271,6 +330,18 @@ export function DeploymentDetail() {
 
           <TabsContent value="environment" className="pt-4">
             <EnvironmentTab deploymentID={deploymentID} editable={canWrite} />
+          </TabsContent>
+
+          <TabsContent value="domains" className="pt-4">
+            <DomainsTab
+              deploymentID={deploymentID}
+              serverID={deployment.data.server_id}
+              canManage={canDomainWrite}
+            />
+          </TabsContent>
+
+          <TabsContent value="webhook" className="pt-4">
+            <WebhookTab deploymentID={deploymentID} />
           </TabsContent>
 
           <TabsContent value="config" className="pt-4">
@@ -306,7 +377,17 @@ export function DeploymentDetail() {
                     </>
                   ) : null}
                   <dt className="text-muted-foreground">Build strategy</dt>
-                  <dd>Built on the server</dd>
+                  <dd>
+                    {deployment.data.build_strategy === 'registry'
+                      ? 'Controller build + Registry push'
+                      : 'Built on target server'}
+                  </dd>
+                  {deployment.data.build_strategy === 'registry' && deployment.data.image_name ? (
+                    <>
+                      <dt className="text-muted-foreground">Target image</dt>
+                      <dd className="font-mono text-xs">{deployment.data.image_name}</dd>
+                    </>
+                  ) : null}
                   <dt className="text-muted-foreground">Working directory</dt>
                   <dd className="font-mono text-xs break-all">{deployment.data.workdir}</dd>
                   <dt className="text-muted-foreground">Container name</dt>
@@ -318,6 +399,388 @@ export function DeploymentDetail() {
         </Tabs>
       </div>
     </>
+  )
+}
+
+/**
+ * Domains tab displaying virtual hosts attached to this deployment.
+ */
+function DomainsTab({
+  deploymentID,
+  serverID,
+  canManage,
+}: {
+  deploymentID: string
+  serverID: string
+  canManage: boolean
+}) {
+  const domainsQuery = useDomains({ deployment_id: deploymentID })
+  const deleteMutation = useDeleteDomain()
+  const issueSSLMutation = useIssueSSL()
+  const syncMutation = useSyncDomain()
+
+  const [configDomain, setConfigDomain] = useState<Domain | null>(null)
+
+  const domains = domainsQuery.data ?? []
+
+  if (domainsQuery.isLoading) {
+    return (
+      <div className="space-y-3 pt-4">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium">Domain Routing</h3>
+          <p className="text-muted-foreground text-xs">
+            Nginx virtual hosts and SSL certificates routing external traffic to this container.
+          </p>
+        </div>
+        {canManage ? (
+          <AddDomainDialog
+            defaultDeploymentID={deploymentID}
+            defaultServerID={serverID}
+            trigger={
+              <Button size="sm">
+                <Plus className="size-4" aria-hidden />
+                Add Domain
+              </Button>
+            }
+          />
+        ) : null}
+      </div>
+
+      {domains.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-10 text-center">
+            <Globe className="text-muted-foreground mb-3 size-8" aria-hidden />
+            <p className="text-sm font-medium">No domains connected</p>
+            <p className="text-muted-foreground mt-1 max-w-sm text-xs">
+              Route traffic from a custom domain to this container by configuring an Nginx virtual host.
+            </p>
+            {canManage ? (
+              <div className="mt-4">
+                <AddDomainDialog
+                  defaultDeploymentID={deploymentID}
+                  defaultServerID={serverID}
+                  trigger={
+                    <Button size="sm" variant="outline">
+                      <Plus className="size-4" aria-hidden />
+                      Connect Domain
+                    </Button>
+                  }
+                />
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="overflow-hidden rounded-md border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Hostname</TableHead>
+                <TableHead>Upstream</TableHead>
+                <TableHead>SSL Certificate</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {domains.map((d) => {
+                const isSyncing = syncMutation.isPending && syncMutation.variables === d.id
+                const isIssuing = issueSSLMutation.isPending && issueSSLMutation.variables === d.id
+                const isDeleting = deleteMutation.isPending && deleteMutation.variables === d.id
+
+                return (
+                  <TableRow key={d.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <Globe className="text-muted-foreground size-4 shrink-0" aria-hidden />
+                        <span>{d.hostname}</span>
+                        <a
+                          href={`${d.ssl_mode === 'letsencrypt' ? 'https' : 'http'}://${d.hostname}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-muted-foreground hover:text-foreground"
+                          title="Open domain in browser"
+                        >
+                          <ExternalLink className="size-3" aria-hidden />
+                        </a>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      127.0.0.1:{d.upstream_port}
+                      {d.websocket ? (
+                        <Badge variant="outline" className="ml-1.5 text-[10px] px-1 py-0">
+                          WS
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>
+                      {d.ssl_mode === 'letsencrypt' ? (
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                            <ShieldCheck className="size-3.5" aria-hidden />
+                            <span className="font-medium">Let's Encrypt</span>
+                          </div>
+                          {d.cert_expires_at ? (
+                            <span className="text-muted-foreground text-[11px]">
+                              {formatExpiration(d.cert_expires_at)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-[11px]">Awaiting issuance</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                          <Shield className="size-3.5" aria-hidden />
+                          <span>HTTP Only</span>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {d.status === 'active' ? (
+                        <Badge variant="success" className="flex w-fit items-center gap-1">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Active
+                        </Badge>
+                      ) : d.status === 'error' ? (
+                        <Badge variant="danger" title={d.status_message}>
+                          Error
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Pending</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="View Nginx configuration"
+                          onClick={() => setConfigDomain(d)}
+                        >
+                          <FileCode className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                        {canManage ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="Sync Nginx configuration"
+                              disabled={isSyncing}
+                              onClick={() => syncMutation.mutate(d.id)}
+                            >
+                              {isSyncing ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                              )}
+                            </Button>
+                            {d.ssl_mode === 'letsencrypt' ? (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title="Issue or renew SSL certificate"
+                                disabled={isIssuing}
+                                onClick={() => issueSSLMutation.mutate(d.id)}
+                              >
+                                {isIssuing ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                ) : (
+                                  <ShieldAlert className="h-4 w-4 text-muted-foreground" />
+                                )}
+                              </Button>
+                            ) : null}
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-muted-foreground hover:text-destructive"
+                              title="Delete domain"
+                              disabled={isDeleting}
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    `Delete domain "${d.hostname}"?\n\nThis will remove the Nginx virtual host from the server.`,
+                                  )
+                                ) {
+                                  deleteMutation.mutate(d.id)
+                                }
+                              }}
+                            >
+                              {isDeleting ? (
+                                <Loader2 className="h-4 w-4 animate-spin text-destructive" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+
+      <ViewConfigDialog
+        open={Boolean(configDomain)}
+        onOpenChange={(open: boolean) => !open && setConfigDomain(null)}
+        domain={configDomain}
+      />
+    </div>
+  )
+}
+
+/**
+ * Push to Deploy tab displaying webhook configuration and integration guides.
+ */
+function WebhookTab({ deploymentID }: { deploymentID: string }) {
+  const webhook = useDeploymentWebhook(deploymentID)
+  const [showSecret, setShowSecret] = useState(false)
+  const [copiedUrl, setCopiedUrl] = useState(false)
+  const [copiedSecret, setCopiedSecret] = useState(false)
+
+  if (webhook.isPending) {
+    return (
+      <div className="space-y-4 pt-4 max-w-3xl">
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    )
+  }
+
+  if (webhook.isError) {
+    return (
+      <div className="pt-4 max-w-3xl">
+        <Alert variant="danger">{webhook.error.message}</Alert>
+      </div>
+    )
+  }
+
+  const { webhook_url, webhook_secret } = webhook.data
+
+  const copyUrl = () => {
+    void navigator.clipboard.writeText(webhook_url)
+    setCopiedUrl(true)
+    setTimeout(() => setCopiedUrl(false), 2000)
+  }
+
+  const copySecret = () => {
+    void navigator.clipboard.writeText(webhook_secret)
+    setCopiedSecret(true)
+    setTimeout(() => setCopiedSecret(false), 2000)
+  }
+
+  return (
+    <div className="space-y-6 pt-4 max-w-3xl">
+      <Card>
+        <CardHeader>
+          <CardTitle>Push to Deploy</CardTitle>
+          <CardDescription>
+            Trigger automatic builds and deployments when code is pushed to your Git repository or CI pipeline.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Webhook URL</label>
+            <div className="flex items-center gap-2">
+              <Input
+                readOnly
+                value={webhook_url}
+                className="font-mono text-xs bg-muted/50"
+              />
+              <Button variant="outline" size="sm" onClick={copyUrl}>
+                {copiedUrl ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+                {copiedUrl ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Webhook Secret</label>
+            <div className="flex items-center gap-2">
+              <Input
+                readOnly
+                type={showSecret ? 'text' : 'password'}
+                value={webhook_secret}
+                className="font-mono text-xs bg-muted/50"
+              />
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => setShowSecret(!showSecret)}
+                title={showSecret ? 'Hide secret' : 'Show secret'}
+              >
+                {showSecret ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </Button>
+              <Button variant="outline" size="sm" onClick={copySecret}>
+                {copiedSecret ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
+                {copiedSecret ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Setup Instructions</CardTitle>
+          <CardDescription>
+            Choose your platform below to configure automated webhook triggers.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6 text-sm">
+          <div className="space-y-2">
+            <h4 className="font-semibold text-sm">GitHub Webhooks</h4>
+            <ol className="list-inside list-decimal text-muted-foreground space-y-1 text-xs leading-5">
+              <li>Open your repository settings on GitHub and select <strong>Webhooks &rarr; Add webhook</strong>.</li>
+              <li>Paste the <strong>Webhook URL</strong> into the <strong>Payload URL</strong> field.</li>
+              <li>Set <strong>Content type</strong> to <code className="font-mono text-foreground">application/json</code>.</li>
+              <li>Paste the <strong>Webhook Secret</strong> into the <strong>Secret</strong> field. dockdeploy automatically validates the HMAC-SHA256 signature (<code className="font-mono text-foreground">X-Hub-Signature-256</code>).</li>
+              <li>Select <strong>Just the push event</strong> and click <strong>Add webhook</strong>.</li>
+            </ol>
+          </div>
+
+          <div className="space-y-2 border-t pt-4">
+            <h4 className="font-semibold text-sm">GitLab Webhooks</h4>
+            <ol className="list-inside list-decimal text-muted-foreground space-y-1 text-xs leading-5">
+              <li>Open your repository settings on GitLab and select <strong>Settings &rarr; Webhooks &rarr; Add new webhook</strong>.</li>
+              <li>Paste the <strong>Webhook URL</strong> into the <strong>URL</strong> field.</li>
+              <li>Paste the <strong>Webhook Secret</strong> into the <strong>Secret token</strong> field (<code className="font-mono text-foreground">X-Gitlab-Token</code>).</li>
+              <li>Ensure <strong>Push events</strong> is checked and click <strong>Add webhook</strong>.</li>
+            </ol>
+          </div>
+
+          <div className="space-y-2 border-t pt-4">
+            <h4 className="font-semibold text-sm">Generic CI / cURL</h4>
+            <p className="text-muted-foreground text-xs">
+              Trigger a build from GitHub Actions, GitLab CI, Jenkins, or any shell script via Bearer token:
+            </p>
+            <div className="rounded bg-muted p-3 font-mono text-xs overflow-x-auto text-foreground">
+              curl -X POST \<br />
+              &nbsp;&nbsp;-H "Authorization: Bearer {webhook_secret}" \<br />
+              &nbsp;&nbsp;{webhook_url}
+            </div>
+            <p className="text-muted-foreground text-xs">
+              Or pass the token in a query parameter:
+            </p>
+            <div className="rounded bg-muted p-3 font-mono text-xs overflow-x-auto text-foreground">
+              curl -X POST "{webhook_url}?token={webhook_secret}"
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 

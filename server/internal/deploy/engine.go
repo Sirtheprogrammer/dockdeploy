@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -283,6 +285,10 @@ func (e *Engine) deployContainer(ctx context.Context, rec *Recorder, remote *rem
 	imageRef := deployment.ImageRef
 
 	switch {
+	case dbRun.Trigger == store.TriggerRollback && dbRun.ImageRef != "":
+		imageRef = dbRun.ImageRef
+		rec.Info("Rolling back to image %s.", imageRef)
+
 	case deployment.SourceType == store.SourceImage:
 		rec.Info("Pulling %s.", imageRef)
 		if err := remote.exec(ctx, "docker pull "+shellQuote(imageRef)); err != nil {
@@ -303,12 +309,18 @@ func (e *Engine) deployContainer(ctx context.Context, rec *Recorder, remote *rem
 			return result{}, fmt.Errorf("build failed: %w", err)
 		}
 
+	case deployment.BuildStrategy == store.BuildRegistry:
+		builtRef, sha, err := e.buildAndPushRegistry(ctx, rec, remote, deployment, dbRun)
+		if err != nil {
+			return result{}, err
+		}
+		imageRef = builtRef
+		if sha != "" {
+			commit = sha
+		}
+
 	default:
-		// Unreachable through the API, which refuses this strategy at creation.
-		// Kept as a guard for a row written before that check existed.
-		return result{}, errors.New(
-			"building here and pushing to a registry is not implemented yet; " +
-				"change this deployment to a remote build")
+		return result{}, fmt.Errorf("unknown build strategy %q", deployment.BuildStrategy)
 	}
 
 	// A previously recorded port is re-checked rather than trusted. It can be
@@ -418,3 +430,171 @@ func sortedKeys(m map[string]string) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+func (e *Engine) buildAndPushRegistry(ctx context.Context, rec *Recorder, remote *remoteHost, deployment *store.Deployment, dbRun *store.Run) (string, string, error) {
+	if deployment.RegistryID == nil {
+		return "", "", errors.New("deployment has no container registry configured")
+	}
+
+	registry, err := e.store.RegistryByID(ctx, *deployment.RegistryID)
+	if err != nil {
+		return "", "", fmt.Errorf("load registry: %w", err)
+	}
+
+	registryPass, err := e.store.RegistryPassword(ctx, e.sealer, registry)
+	if err != nil {
+		return "", "", fmt.Errorf("read registry password: %w", err)
+	}
+
+	// Determine registry host for tagging
+	regHost := registry.URL
+	regHost = strings.TrimPrefix(regHost, "https://")
+	regHost = strings.TrimPrefix(regHost, "http://")
+	regHost = strings.TrimRight(regHost, "/")
+
+	imageRef := fmt.Sprintf("%s/%s:%d", regHost, deployment.Slug, dbRun.Number)
+	if deployment.ImageName != "" {
+		imageRef = fmt.Sprintf("%s:%d", deployment.ImageName, dbRun.Number)
+	}
+
+	tempDir, err := os.MkdirTemp("", "dockdeploy-build-"+deployment.Slug+"-*")
+	if err != nil {
+		return "", "", fmt.Errorf("create temp build directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	rec.Info("Cloning repository on controller.")
+	credential, err := e.store.ResolveGitCredential(ctx, e.sealer, deployment.GitCredentialID)
+	if err != nil {
+		return "", "", fmt.Errorf("read git credential: %w", err)
+	}
+
+	commit, err := e.localGitClone(ctx, rec, gitx.Source{
+		RepoURL:    deployment.RepoURL,
+		Ref:        deployment.GitRef,
+		Credential: credential,
+	}, tempDir)
+	if err != nil {
+		return "", "", fmt.Errorf("git checkout on controller: %w", err)
+	}
+	rec.Info("Checked out %s at %s.", deployment.GitRef, shortSHA(commit))
+
+	rec.Info("Building %s on controller.", imageRef)
+	dockerfile := deployment.DockerfilePath
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	buildContext := deployment.BuildContext
+	if buildContext == "" {
+		buildContext = "."
+	}
+
+	buildCmd := exec.CommandContext(ctx, "docker", "build", "-t", imageRef, "-f", dockerfile, buildContext)
+	buildCmd.Dir = tempDir
+	buildCmd.Stdout = rec.Stream("stdout")
+	buildCmd.Stderr = rec.Stream("stderr")
+	if err := buildCmd.Run(); err != nil {
+		return "", "", fmt.Errorf("local docker build failed: %w", err)
+	}
+
+	rec.Info("Pushing %s to registry %s.", imageRef, registry.Name)
+	loginCmd := exec.CommandContext(ctx, "docker", "login", registry.URL, "-u", registry.Username, "--password-stdin")
+	loginCmd.Stdin = strings.NewReader(registryPass)
+	loginCmd.Stdout = rec.Stream("stdout")
+	loginCmd.Stderr = rec.Stream("stderr")
+	if err := loginCmd.Run(); err != nil {
+		return "", "", fmt.Errorf("controller docker login failed: %w", err)
+	}
+
+	pushCmd := exec.CommandContext(ctx, "docker", "push", imageRef)
+	pushCmd.Stdout = rec.Stream("stdout")
+	pushCmd.Stderr = rec.Stream("stderr")
+	if err := pushCmd.Run(); err != nil {
+		return "", "", fmt.Errorf("docker push to %s failed: %w", registry.URL, err)
+	}
+
+	// Pull on target server
+	rec.Info("Logging in and pulling %s on target server.", imageRef)
+	remoteLogin := fmt.Sprintf("echo %s | docker login %s -u %s --password-stdin",
+		shellQuote(registryPass), shellQuote(registry.URL), shellQuote(registry.Username))
+	if err := remote.exec(ctx, remoteLogin); err != nil {
+		return "", "", fmt.Errorf("target server docker login failed: %w", err)
+	}
+
+	if err := remote.exec(ctx, "docker pull "+shellQuote(imageRef)); err != nil {
+		return "", "", fmt.Errorf("target server docker pull failed: %w", err)
+	}
+
+	_ = remote.exec(ctx, "docker logout "+shellQuote(registry.URL)+" 2>/dev/null || true")
+
+	return imageRef, commit, nil
+}
+
+func (e *Engine) localGitClone(ctx context.Context, rec *Recorder, source gitx.Source, targetDir string) (string, error) {
+	if err := gitx.ValidateRepoURL(source.RepoURL); err != nil {
+		return "", err
+	}
+	if err := gitx.ValidateRef(source.Ref); err != nil {
+		return "", err
+	}
+
+	cloneURL := source.RepoURL
+	var env []string
+
+	if source.Credential != nil {
+		switch source.Credential.Kind {
+		case gitx.KindToken:
+			authURL, err := gitx.AuthenticatedURL(source.RepoURL, source.Credential)
+			if err != nil {
+				return "", err
+			}
+			cloneURL = authURL
+		case gitx.KindSSHKey:
+			keyFile, err := os.CreateTemp("", "dockdeploy-git-key-*")
+			if err != nil {
+				return "", err
+			}
+			defer os.Remove(keyFile.Name())
+			key := strings.TrimRight(source.Credential.Secret, "\n") + "\n"
+			if _, err := keyFile.WriteString(key); err != nil {
+				_ = keyFile.Close()
+				return "", err
+			}
+			_ = keyFile.Chmod(0o600)
+			_ = keyFile.Close()
+
+			env = append(env, fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %s -o StrictHostKeyChecking=accept-new -o IdentitiesOnly=yes", keyFile.Name()))
+		}
+	}
+
+	env = append(env, "GIT_TERMINAL_PROMPT=0", "PATH="+os.Getenv("PATH"))
+
+	cloneCmd := exec.CommandContext(ctx, "git", "clone", cloneURL, targetDir)
+	cloneCmd.Env = env
+	cloneCmd.Stdout = rec.Stream("stdout")
+	cloneCmd.Stderr = rec.Stream("stderr")
+	if err := cloneCmd.Run(); err != nil {
+		return "", fmt.Errorf("git clone failed: %w", err)
+	}
+
+	ref := source.Reference()
+	if ref != "HEAD" {
+		checkoutCmd := exec.CommandContext(ctx, "git", "checkout", ref)
+		checkoutCmd.Dir = targetDir
+		checkoutCmd.Env = env
+		checkoutCmd.Stdout = rec.Stream("stdout")
+		checkoutCmd.Stderr = rec.Stream("stderr")
+		if err := checkoutCmd.Run(); err != nil {
+			return "", fmt.Errorf("git checkout %s failed: %w", ref, err)
+		}
+	}
+
+	revCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	revCmd.Dir = targetDir
+	out, err := revCmd.Output()
+	if err != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+

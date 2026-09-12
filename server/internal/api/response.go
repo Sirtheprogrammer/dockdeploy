@@ -93,6 +93,10 @@ func Unavailable(format string, args ...any) *Error {
 	return newError(http.StatusServiceUnavailable, CodeUnavailable, format, args...)
 }
 
+func RateLimited(format string, args ...any) *Error {
+	return newError(http.StatusTooManyRequests, CodeRateLimited, format, args...)
+}
+
 // Internal is deliberately vague to the caller; the real error goes to the log.
 func Internal(err error) *Error {
 	return newError(http.StatusInternalServerError, CodeInternal, "Something went wrong on our end.").WithCause(err)

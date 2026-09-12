@@ -21,6 +21,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/db"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/sshx"
@@ -71,7 +72,7 @@ func run() error {
 	}
 
 	db := store.New(pool)
-	go purgeExpiredSessions(ctx, db, log)
+	go runHousekeeping(ctx, db, log)
 
 	// One SSH connection per managed server, shared by every request that
 	// needs it and closed on shutdown.
@@ -95,6 +96,8 @@ func run() error {
 		worker.Run(ctx)
 	}()
 
+	nginxManager := nginxx.NewManager(db, sealer, serverManager, log)
+
 	srv := &api.Server{
 		Config:  cfg,
 		Log:     log,
@@ -103,6 +106,7 @@ func run() error {
 		Hasher:  auth.NewHasher(cfg.SessionSecret),
 		Servers: serverManager,
 		Deploys: engine,
+		Nginx:   nginxManager,
 		Started: time.Now(),
 		SPA:     web.Handler(log, `Run <code>npm run dev</code> in <code>frontend/</code> and open the Vite URL, or build the image to embed the dashboard.`),
 	}
@@ -160,26 +164,40 @@ func run() error {
 	return nil
 }
 
-// purgeExpiredSessions keeps the sessions table from growing without bound.
-// Expired rows are already unusable -- SessionByTokenHash filters them in SQL
-// -- so this is housekeeping, not a security control.
-func purgeExpiredSessions(ctx context.Context, db *store.Store, log *slog.Logger) {
+// runHousekeeping periodically purges expired sessions, prunes old deployment
+// runs and cascades old logs, and clears old audit history.
+func runHousekeeping(ctx context.Context, db *store.Store, log *slog.Logger) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 
-	for {
-		removed, err := db.PurgeExpiredSessions(ctx)
-		switch {
-		case err != nil && ctx.Err() == nil:
+	runOnce := func() {
+		if removed, err := db.PurgeExpiredSessions(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("purge expired sessions", "error", err)
-		case removed > 0:
+		} else if removed > 0 {
 			log.Debug("purged expired sessions", "count", removed)
 		}
 
+		if pruned, err := db.PruneRunHistory(ctx, 30); err != nil && ctx.Err() == nil {
+			log.Warn("prune run history", "error", err)
+		} else if pruned > 0 {
+			log.Debug("pruned run history", "count", pruned)
+		}
+
+		if purged, err := db.PurgeOldAuditLogs(ctx, 90*24*time.Hour); err != nil && ctx.Err() == nil {
+			log.Warn("purge old audit logs", "error", err)
+		} else if purged > 0 {
+			log.Debug("purged old audit logs", "count", purged)
+		}
+	}
+
+	runOnce()
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			runOnce()
 		}
 	}
 }

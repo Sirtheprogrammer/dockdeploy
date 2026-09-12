@@ -35,3 +35,14 @@ export function formatRelative(input: string | number | Date): string {
   const label = `${Math.floor(abs / size)}${suffix}`
   return seconds < 0 ? `in ${label}` : `${label} ago`
 }
+
+/** Expiration formatting for SSL certificates. */
+export function formatExpiration(dateStr?: string | null): string | null {
+  if (!dateStr) return null
+  const then = new Date(dateStr).getTime()
+  if (Number.isNaN(then)) return null
+  const days = Math.round((then - Date.now()) / (1000 * 60 * 60 * 24))
+  if (days < 0) return 'Expired'
+  if (days === 0) return 'Expires today'
+  return `Expires in ${days} days`
+}
