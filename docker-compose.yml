@@ -21,7 +21,7 @@ services:
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?set APP_ENCRYPTION_KEY in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
     ports:
-      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8080}:8080"
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-8081}:8082"
     volumes:
       # Persists SQLite database and application data
       - dockdeploy-data:/home/app/data
