@@ -1,5 +1,7 @@
 import {
   Box,
+  Download,
+  FolderOpen,
   HardDrive,
   Layers,
   Loader2,
@@ -19,6 +21,7 @@ import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CapabilityList } from '@/components/servers/CapabilityList'
 import { LogViewer } from '@/components/servers/LogViewer'
+import { ServerFileBrowser } from '@/components/servers/ServerFileBrowser'
 import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
 import { ServerStatusBadge } from '@/components/servers/ServerStatusBadge'
 import { ServerTerminal } from '@/components/servers/ServerTerminal'
@@ -38,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { can, useSession } from '@/lib/session'
 import {
   capabilitiesOf,
+  serverArchiveDownloadURL,
   useContainerAction,
   useContainers,
   useDeleteServer,
@@ -59,6 +63,7 @@ export function ServerDetail() {
   const [tab, setTab] = useState('containers')
   const [logsFor, setLogsFor] = useState<Container | null>(null)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [filesPath, setFilesPath] = useState('~')
 
   const server = useServer(serverID)
   const info = useDockerInfo(serverID)
@@ -68,6 +73,7 @@ export function ServerDetail() {
   const canOperate = can(user, 'container:operate')
   const canDelete = can(user, 'server:delete')
   const canTerminal = can(user, 'server:write') || canOperate
+  const canWrite = can(user, 'server:write')
 
   if (server.isPending) {
     return (
@@ -163,6 +169,7 @@ export function ServerDetail() {
           <TabsList>
             <TabsTrigger value="containers">Containers</TabsTrigger>
             <TabsTrigger value="metrics">Metrics & Health</TabsTrigger>
+            <TabsTrigger value="files">Files & Volumes</TabsTrigger>
             <TabsTrigger value="images">Images</TabsTrigger>
             <TabsTrigger value="volumes">Volumes</TabsTrigger>
             <TabsTrigger value="networks">Networks</TabsTrigger>
@@ -185,11 +192,27 @@ export function ServerDetail() {
               />
             </ErrorBoundary>
           </TabsContent>
+          <TabsContent value="files" className="pt-4">
+            <ErrorBoundary fallbackTitle="Could not load file browser">
+              <ServerFileBrowser
+                server={server.data}
+                initialPath={filesPath}
+                canWrite={canWrite}
+              />
+            </ErrorBoundary>
+          </TabsContent>
           <TabsContent value="images" className="pt-4">
             <ImagesTab serverID={serverID} active={tab === 'images'} />
           </TabsContent>
           <TabsContent value="volumes" className="pt-4">
-            <VolumesTab serverID={serverID} active={tab === 'volumes'} />
+            <VolumesTab
+              serverID={serverID}
+              active={tab === 'volumes'}
+              onBrowseVolume={(mountpoint) => {
+                setFilesPath(mountpoint)
+                setTab('files')
+              }}
+            />
           </TabsContent>
           <TabsContent value="networks" className="pt-4">
             <NetworksTab serverID={serverID} active={tab === 'networks'} />
@@ -407,7 +430,15 @@ function ImagesTab({ serverID, active }: { serverID: string; active: boolean }) 
   )
 }
 
-function VolumesTab({ serverID, active }: { serverID: string; active: boolean }) {
+function VolumesTab({
+  serverID,
+  active,
+  onBrowseVolume,
+}: {
+  serverID: string
+  active: boolean
+  onBrowseVolume?: (mountpoint: string) => void
+}) {
   const { data: volumes, isPending, isError, error } = useVolumes(serverID, active)
   if (isError) return <Alert variant="danger">{error.message}</Alert>
   if (isPending) return <Skeleton className="h-40" />
@@ -423,15 +454,46 @@ function VolumesTab({ serverID, active }: { serverID: string; active: boolean })
             <TableHead>Name</TableHead>
             <TableHead>Driver</TableHead>
             <TableHead>Mountpoint</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {volumes.map((volume) => (
             <TableRow key={volume.Name}>
-              <TableCell className="font-mono text-xs">{volume.Name}</TableCell>
+              <TableCell className="font-mono text-xs font-semibold">{volume.Name}</TableCell>
               <TableCell className="text-sm">{volume.Driver}</TableCell>
               <TableCell className="text-muted-foreground truncate font-mono text-xs">
                 {volume.Mountpoint}
+              </TableCell>
+              <TableCell className="text-right">
+                <div className="flex items-center justify-end gap-2">
+                  {onBrowseVolume && volume.Mountpoint && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => onBrowseVolume(volume.Mountpoint)}
+                      title="Browse files inside this volume"
+                    >
+                      <FolderOpen className="size-3.5 mr-1" aria-hidden />
+                      Browse Files
+                    </Button>
+                  )}
+                  {volume.Mountpoint && (
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      title="Download volume contents as .tar.gz archive"
+                    >
+                      <a href={serverArchiveDownloadURL(serverID, volume.Mountpoint)} download>
+                        <Download className="size-3.5 mr-1" aria-hidden />
+                        Export Archive
+                      </a>
+                    </Button>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))}

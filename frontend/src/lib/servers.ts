@@ -358,3 +358,99 @@ export function serverTerminalWebSocketURL(
   if (qs) url += `?${qs}`
   return url
 }
+
+export interface FileEntry {
+  name: string
+  path: string
+  size: number
+  mode: string
+  is_dir: boolean
+  is_symlink: boolean
+  mod_time: string
+  permissions: string
+}
+
+export interface DirectoryListing {
+  path: string
+  parent: string
+  entries: FileEntry[]
+  total_files: number
+  total_dirs: number
+  total_bytes: number
+}
+
+export interface FileTransferResult {
+  source_server_id: string
+  target_server_id: string
+  source_path: string
+  target_path: string
+  bytes_copied: number
+  duration_ms: number
+}
+
+export function useDirectoryListing(serverID: string, path: string = '~') {
+  return useQuery<DirectoryListing, ApiError>({
+    queryKey: ['servers', serverID, 'files', path],
+    queryFn: ({ signal }) =>
+      api.get<DirectoryListing>(`/servers/${serverID}/files?path=${encodeURIComponent(path)}`, {
+        signal,
+      }),
+    enabled: serverID !== '',
+  })
+}
+
+export function useUploadFile(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ path: string; size: number; status: string }, ApiError, {
+    file: File
+    targetDir?: string
+    targetPath?: string
+  }>({
+    mutationFn: async ({ file, targetDir, targetPath }) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (targetDir) formData.append('dir', targetDir)
+      if (targetPath) formData.append('target_path', targetPath)
+      return api.post<{ path: string; size: number; status: string }>(
+        `/servers/${serverID}/files/upload`,
+        formData,
+      )
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useTransferFile() {
+  const queryClient = useQueryClient()
+  return useMutation<
+    FileTransferResult,
+    ApiError,
+    {
+      sourceServerID: string
+      targetServerID: string
+      sourcePath: string
+      targetPath: string
+    }
+  >({
+    mutationFn: ({ sourceServerID, targetServerID, sourcePath, targetPath }) =>
+      api.post<FileTransferResult>(`/servers/${sourceServerID}/files/transfer`, {
+        source_path: sourcePath,
+        target_server_id: targetServerID,
+        target_path: targetPath,
+      }),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['servers', vars.targetServerID, 'files'] })
+    },
+  })
+}
+
+export function serverFileDownloadURL(serverID: string, path: string): string {
+  return `/api/servers/${serverID}/files/download?path=${encodeURIComponent(path)}`
+}
+
+export function serverArchiveDownloadURL(serverID: string, path: string): string {
+  return `/api/servers/${serverID}/files/archive?path=${encodeURIComponent(path)}`
+}
+
