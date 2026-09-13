@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FileCode,
   Globe,
+  KeyRound,
   Loader2,
   RefreshCw,
   Search,
@@ -15,10 +16,12 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { toast } from 'sonner'
 
 import { EmptyState } from '@/components/EmptyState'
 import { AddDomainDialog } from '@/components/domains/AddDomainDialog'
 import { ViewConfigDialog } from '@/components/domains/ViewConfigDialog'
+import { SudoPromptDialog } from '@/components/servers/SudoPromptDialog'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -53,6 +56,7 @@ export function Domains() {
   const [search, setSearch] = useState('')
   const [selectedServer, setSelectedServer] = useState<string>('all')
   const [configDomain, setConfigDomain] = useState<Domain | null>(null)
+  const [sudoActionDomain, setSudoActionDomain] = useState<Domain | null>(null)
 
   const domainsQuery = useDomains(
     selectedServer !== 'all' ? { server_id: selectedServer } : undefined,
@@ -270,6 +274,17 @@ export function Domains() {
                               <RefreshCw className="h-4 w-4 text-muted-foreground" />
                             )}
                           </Button>
+                          {domain.status === 'error' ? (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className="text-amber-500 hover:text-amber-400 hover:bg-amber-500/10"
+                              title="Deploy with Sudo / Root Password"
+                              onClick={() => setSudoActionDomain(domain)}
+                            >
+                              <KeyRound className="h-4 w-4" />
+                            </Button>
+                          ) : null}
                           {domain.ssl_mode === 'letsencrypt' ? (
                             <Button
                               variant="ghost"
@@ -322,6 +337,53 @@ export function Domains() {
         domain={configDomain}
         open={Boolean(configDomain)}
         onOpenChange={(open: boolean) => !open && setConfigDomain(null)}
+      />
+
+      <SudoPromptDialog
+        open={Boolean(sudoActionDomain)}
+        onOpenChange={(open) => !open && setSudoActionDomain(null)}
+        title={sudoActionDomain ? `Deploy Nginx Virtual Host for ${sudoActionDomain.hostname}` : ''}
+        description="Installing Nginx virtual hosts in /etc/nginx and reloading the web server requires root privileges."
+        serverName={sudoActionDomain?.server_name}
+        commands={
+          sudoActionDomain
+            ? [
+                `# 1. Install virtual host configuration in Nginx sites directory`,
+                `cp /tmp/dockdeploy-${sudoActionDomain.hostname}.conf /etc/nginx/sites-available/${sudoActionDomain.hostname}.conf`,
+                `ln -sf /etc/nginx/sites-available/${sudoActionDomain.hostname}.conf /etc/nginx/sites-enabled/${sudoActionDomain.hostname}.conf`,
+                `chmod 644 /etc/nginx/sites-available/${sudoActionDomain.hostname}.conf`,
+                ``,
+                `# 2. Test system Nginx configuration syntax`,
+                `nginx -t`,
+                ``,
+                `# 3. Reload Nginx service without dropping connections`,
+                `systemctl reload nginx || service nginx reload || nginx -s reload`,
+                ...(sudoActionDomain.ssl_mode === 'letsencrypt'
+                  ? [
+                      ``,
+                      `# 4. Request Let's Encrypt TLS Certificate via ACME webroot challenge`,
+                      `certbot certonly --webroot -w /var/www/certbot -d ${sudoActionDomain.hostname} --non-interactive --agree-tos`,
+                      ``,
+                      `# 5. Reload Nginx with updated TLS certificate paths`,
+                      `systemctl reload nginx || service nginx reload || nginx -s reload`,
+                    ]
+                  : []),
+              ]
+            : []
+        }
+        actionLabel="Deploy as Root"
+        isPending={syncMutation.isPending}
+        error={syncMutation.error?.message}
+        onConfirm={async (sudoPassword, saveSudo) => {
+          if (!sudoActionDomain) return
+          await syncMutation.mutateAsync({
+            id: sudoActionDomain.id,
+            sudo_password: sudoPassword,
+            save_sudo: saveSudo,
+          })
+          setSudoActionDomain(null)
+          toast.success('Virtual host deployed successfully with root permissions!')
+        }}
       />
     </>
   )

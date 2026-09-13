@@ -31,6 +31,14 @@ export interface CreateDomainInput {
   upstream_port: number
   ssl_mode?: DomainSSLMode
   websocket?: boolean
+  sudo_password?: string
+  save_sudo?: boolean
+}
+
+export interface DomainSudoActionInput {
+  id: string
+  sudo_password?: string
+  save_sudo?: boolean
 }
 
 export const domainsKey = ['domains'] as const
@@ -80,9 +88,17 @@ export function useDeleteDomain() {
 
 export function useIssueSSL() {
   const queryClient = useQueryClient()
-  return useMutation<Domain, ApiError, string>({
-    mutationFn: (id) => api.post<Domain>(`/domains/${id}/ssl`, {}),
-    onSuccess: (_, id) => {
+  return useMutation<Domain, ApiError, DomainSudoActionInput | string>({
+    mutationFn: (arg) => {
+      const id = typeof arg === 'string' ? arg : arg.id
+      const body =
+        typeof arg === 'string'
+          ? {}
+          : { sudo_password: arg.sudo_password, save_sudo: arg.save_sudo }
+      return api.post<Domain>(`/domains/${id}/ssl`, body)
+    },
+    onSuccess: (_, arg) => {
+      const id = typeof arg === 'string' ? arg : arg.id
       void queryClient.invalidateQueries({ queryKey: domainsKey })
       void queryClient.invalidateQueries({ queryKey: domainKey(id) })
     },
@@ -91,9 +107,17 @@ export function useIssueSSL() {
 
 export function useSyncDomain() {
   const queryClient = useQueryClient()
-  return useMutation<Domain, ApiError, string>({
-    mutationFn: (id) => api.post<Domain>(`/domains/${id}/sync`, {}),
-    onSuccess: (_, id) => {
+  return useMutation<Domain, ApiError, DomainSudoActionInput | string>({
+    mutationFn: (arg) => {
+      const id = typeof arg === 'string' ? arg : arg.id
+      const body =
+        typeof arg === 'string'
+          ? {}
+          : { sudo_password: arg.sudo_password, save_sudo: arg.save_sudo }
+      return api.post<Domain>(`/domains/${id}/sync`, body)
+    },
+    onSuccess: (_, arg) => {
+      const id = typeof arg === 'string' ? arg : arg.id
       void queryClient.invalidateQueries({ queryKey: domainsKey })
       void queryClient.invalidateQueries({ queryKey: domainKey(id) })
     },

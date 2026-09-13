@@ -497,4 +497,40 @@ export function useSaveFileContent(serverID: string) {
   })
 }
 
+export function useSetServerSudoPassword(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<Server, ApiError, { sudo_password: string }>({
+    mutationFn: (body) => api.post<Server>(`/servers/${serverID}/sudo-password`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: serverKey(serverID) })
+    },
+  })
+}
+
+export interface ExecRootInput {
+  command: string
+  sudo_password?: string
+  save_sudo?: boolean
+}
+
+export interface ExecRootResult {
+  stdout: string
+  stderr: string
+  exit_code: number
+  success: boolean
+}
+
+export function useExecRoot(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<ExecRootResult, ApiError, ExecRootInput>({
+    mutationFn: (body) => api.post<ExecRootResult>(`/servers/${serverID}/exec-root`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: serverKey(serverID) })
+    },
+  })
+}
+
+
 

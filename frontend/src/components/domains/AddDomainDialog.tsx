@@ -1,4 +1,4 @@
-import { Globe, Loader2, Plus } from 'lucide-react'
+import { Eye, EyeOff, Globe, KeyRound, Loader2, Plus, ShieldAlert } from 'lucide-react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 
 import { FieldError } from '@/components/AuthLayout'
@@ -46,6 +46,9 @@ export function AddDomainDialog({
   const [upstreamPort, setUpstreamPort] = useState('')
   const [websocket, setWebsocket] = useState(false)
   const [enableSSL, setEnableSSL] = useState(true)
+  const [sudoPassword, setSudoPassword] = useState('')
+  const [saveSudo, setSaveSudo] = useState(true)
+  const [showPassword, setShowPassword] = useState(false)
 
   const servers = useServers()
   const deployments = useDeployments()
@@ -88,6 +91,9 @@ export function AddDomainDialog({
     setUpstreamPort('')
     setWebsocket(false)
     setEnableSSL(true)
+    setSudoPassword('')
+    setSaveSudo(true)
+    setShowPassword(false)
     createDomain.reset()
   }
 
@@ -101,6 +107,8 @@ export function AddDomainDialog({
         upstream_port: Number(upstreamPort) || 80,
         websocket,
         ssl_mode: enableSSL ? 'letsencrypt' : 'none',
+        sudo_password: sudoPassword.trim() || undefined,
+        save_sudo: saveSudo,
       },
       {
         onSuccess: () => {
@@ -119,8 +127,13 @@ export function AddDomainDialog({
       : null
 
   const nginxMissing = selectedServer && caps && !caps.nginx_version
-  const sudoMissing = selectedServer && caps && caps.sudo_mode === 'none'
   const certbotMissing = enableSSL && selectedServer && caps && !caps.certbot_version
+  const needsSudoPrompt =
+    selectedServer &&
+    !selectedServer.has_sudo_password &&
+    caps &&
+    caps.sudo_mode !== 'root' &&
+    caps.sudo_mode !== 'nopasswd'
 
   return (
     <Dialog
@@ -138,7 +151,7 @@ export function AddDomainDialog({
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <form onSubmit={onSubmit} className="space-y-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -150,17 +163,15 @@ export function AddDomainDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {formError ? <Alert variant="danger">{formError}</Alert> : null}
+          {formError ? (
+            <Alert variant="danger" className="text-xs">
+              {formError}
+            </Alert>
+          ) : null}
 
           {nginxMissing ? (
             <Alert variant="warning" className="text-xs">
               {selectedServer.name} does not have Nginx installed. Install nginx before adding domains.
-            </Alert>
-          ) : null}
-
-          {sudoMissing ? (
-            <Alert variant="warning" className="text-xs">
-              SSH user on {selectedServer.name} does not have sudo privileges required for Nginx.
             </Alert>
           ) : null}
 
@@ -273,6 +284,75 @@ export function AddDomainDialog({
                 onChange={(e) => setWebsocket(e.target.checked)}
                 className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
               />
+            </div>
+          </div>
+
+          {/* Sudo / Elevated Permissions Section */}
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-2.5">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="size-4 text-amber-400 shrink-0" />
+              <div className="flex-1">
+                <span className="text-xs font-semibold text-zinc-100">
+                  Elevated Root Privileges (Sudo)
+                </span>
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Writing virtual hosts to /etc/nginx and reloading Nginx requires sudo.
+                </p>
+              </div>
+              {selectedServer?.has_sudo_password ? (
+                <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1.5 py-0.5">
+                  Password Saved
+                </span>
+              ) : needsSudoPrompt ? (
+                <span className="text-[10px] bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded px-1.5 py-0.5">
+                  Password Required
+                </span>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <Label htmlFor="domain-sudo" className="text-xs font-medium flex items-center gap-1.5">
+                <KeyRound className="size-3 text-muted-foreground" />
+                Server Sudo Password {selectedServer?.has_sudo_password ? '(optional override)' : ''}
+              </Label>
+              <div className="relative">
+                <Input
+                  id="domain-sudo"
+                  type={showPassword ? 'text' : 'password'}
+                  value={sudoPassword}
+                  onChange={(e) => setSudoPassword(e.target.value)}
+                  placeholder={
+                    selectedServer?.has_sudo_password
+                      ? '•••••••• (using saved server sudo password)'
+                      : 'Enter server sudo password...'
+                  }
+                  className="pr-9 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-0.5">
+              <input
+                id="domain-save-sudo"
+                type="checkbox"
+                checked={saveSudo}
+                onChange={(e) => setSaveSudo(e.target.checked)}
+                className="size-3.5 rounded border-gray-300 text-primary focus:ring-primary"
+              />
+              <Label
+                htmlFor="domain-save-sudo"
+                className="text-[11px] text-muted-foreground cursor-pointer select-none font-normal"
+              >
+                Remember sudo password on server credentials for future deployments
+              </Label>
             </div>
           </div>
 

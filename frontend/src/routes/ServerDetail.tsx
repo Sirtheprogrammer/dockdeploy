@@ -3,12 +3,14 @@ import {
   Download,
   FolderOpen,
   HardDrive,
+  KeyRound,
   Layers,
   Loader2,
   Network,
   RefreshCw,
   ScrollText,
   Settings2,
+  ShieldAlert,
   Terminal,
   Trash2,
 } from 'lucide-react'
@@ -23,8 +25,10 @@ import { CapabilityList } from '@/components/servers/CapabilityList'
 import { LogViewer } from '@/components/servers/LogViewer'
 import { ServerFileBrowser } from '@/components/servers/ServerFileBrowser'
 import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
+import { ServerRootExecDialog } from '@/components/servers/ServerRootExecDialog'
 import { ServerStatusBadge } from '@/components/servers/ServerStatusBadge'
 import { ServerTerminal } from '@/components/servers/ServerTerminal'
+import { SetSudoPasswordDialog } from '@/components/servers/SetSudoPasswordDialog'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -65,6 +69,8 @@ export function ServerDetail() {
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [terminalFullscreen, setTerminalFullscreen] = useState(false)
   const [filesPath, setFilesPath] = useState('~')
+  const [sudoDialogOpen, setSudoDialogOpen] = useState(false)
+  const [execRootOpen, setExecRootOpen] = useState(false)
 
   const server = useServer(serverID)
   const info = useDockerInfo(serverID)
@@ -109,6 +115,18 @@ export function ServerDetail() {
               <Button variant="outline" size="sm" onClick={() => setTerminalOpen(true)}>
                 <Terminal className="size-3.5" aria-hidden />
                 Terminal
+              </Button>
+            ) : null}
+            {canWrite ? (
+              <Button variant="outline" size="sm" onClick={() => setExecRootOpen(true)}>
+                <ShieldAlert className="size-3.5 text-amber-500" aria-hidden />
+                Run Root Command
+              </Button>
+            ) : null}
+            {canWrite ? (
+              <Button variant="outline" size="sm" onClick={() => setSudoDialogOpen(true)}>
+                <KeyRound className="size-3.5" aria-hidden />
+                Sudo Password
               </Button>
             ) : null}
             <Button variant="outline" size="sm" disabled={probe.isPending} onClick={() => probe.mutate()}>
@@ -293,6 +311,21 @@ export function ServerDetail() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {server.data ? (
+        <>
+          <SetSudoPasswordDialog
+            server={server.data}
+            open={sudoDialogOpen}
+            onOpenChange={setSudoDialogOpen}
+          />
+          <ServerRootExecDialog
+            server={server.data}
+            open={execRootOpen}
+            onOpenChange={setExecRootOpen}
+          />
+        </>
+      ) : null}
     </>
   )
 }

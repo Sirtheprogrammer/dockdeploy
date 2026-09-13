@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -312,6 +313,42 @@ func (s *Store) UpdateServer(ctx context.Context, id, name, dockerSocket string)
 		return nil, wrap("store: update server", err)
 	}
 	return &server, nil
+}
+
+// SetServerSudoPassword updates or clears the stored sudo password for a server.
+func (s *Store) SetServerSudoPassword(ctx context.Context, sealer Sealer, serverID, sudoPassword string) error {
+	if s.sqlite != nil {
+		return s.sqlite.SetServerSudoPassword(ctx, sealer, serverID, sudoPassword)
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		var oldSudoID *string
+		err := tx.QueryRow(ctx, `SELECT sudo_password_secret_id FROM servers WHERE id = $1`, serverID).Scan(&oldSudoID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return wrap("store: find server for sudo password", err)
+		}
+
+		var newSudoID *string
+		if sudoPassword != "" {
+			id, err := insertSecret(ctx, tx, sealer, KindSudoPassword, sudoPassword)
+			if err != nil {
+				return err
+			}
+			newSudoID = id
+		}
+
+		_, err = tx.Exec(ctx, `UPDATE servers SET sudo_password_secret_id = $1, updated_at = now() WHERE id = $2`, newSudoID, serverID)
+		if err != nil {
+			return wrap("store: update server sudo password", err)
+		}
+
+		if oldSudoID != nil && (newSudoID == nil || *oldSudoID != *newSudoID) {
+			_, _ = tx.Exec(ctx, `DELETE FROM secrets WHERE id = $1`, *oldSudoID)
+		}
+		return nil
+	})
 }
 
 // DeleteServer removes a server and the secrets that belonged to it.

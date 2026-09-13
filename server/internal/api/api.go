@@ -143,6 +143,9 @@ func (s *Server) Routes() (http.Handler, error) {
 			sv.guarded(http.MethodPut, "/{serverID}/files/content", auth.PermServerWrite, s.handleSaveFileContent)
 			sv.guarded(http.MethodPost, "/{serverID}/files/upload", auth.PermServerWrite, s.handleUploadFile)
 			sv.guarded(http.MethodPost, "/{serverID}/files/transfer", auth.PermServerWrite, s.handleTransferFile)
+
+			sv.guarded(http.MethodPost, "/{serverID}/sudo-password", auth.PermServerWrite, s.handleSetServerSudoPassword)
+			sv.guarded(http.MethodPost, "/{serverID}/exec-root", auth.PermServerWrite, s.handleExecRoot)
 		})
 
 		api.group("/deployments", func(d routes) {

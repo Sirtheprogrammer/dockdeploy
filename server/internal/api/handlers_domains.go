@@ -142,6 +142,8 @@ type createDomainRequest struct {
 	UpstreamPort int    `json:"upstream_port"`
 	WebSocket    bool   `json:"websocket"`
 	SSLMode      string `json:"ssl_mode"`
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
 }
 
 func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) error {
@@ -220,6 +222,11 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 		depID = &deployment.ID
 	}
 
+	// Persist sudo password if requested
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
 	// Pre-render virtual host configuration so it is immediately available and never blank
 	rendered, _ := nginxx.Render(nginxx.Config{
 		Hostname:     hostname,
@@ -255,7 +262,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 	if s.Nginx != nil {
 		if sslMode == store.DomainSSLLetsEncrypt {
 			// First deploy HTTP vhost, then attempt certificate issuance
-			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created); deployErr != nil {
+			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created, req.SudoPassword); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
 					ConfigRendered: &rendered,
 					Status:        store.DomainStatusError,
@@ -263,12 +270,12 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 				})
 			} else {
 				// Attempt SSL issuance
-				if sslErr := s.Nginx.IssueSSL(r.Context(), server, created); sslErr != nil {
+				if sslErr := s.Nginx.IssueSSL(r.Context(), server, created, req.SudoPassword); sslErr != nil {
 					s.Log.Warn("ssl issuance failed after vhost created", "domain", hostname, "error", sslErr)
 				}
 			}
 		} else {
-			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created); deployErr != nil {
+			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created, req.SudoPassword); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
 					ConfigRendered: &rendered,
 					Status:        store.DomainStatusError,
@@ -364,7 +371,20 @@ func (s *Server) handleIssueSSL(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	domain.SSLMode = store.DomainSSLLetsEncrypt
-	if err := s.Nginx.IssueSSL(r.Context(), server, domain); err != nil {
+
+	var req struct {
+		SudoPassword string `json:"sudo_password"`
+		SaveSudo     bool   `json:"save_sudo"`
+	}
+	if r.ContentLength > 0 {
+		_ = DecodeJSON(w, r, &req)
+	}
+
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Nginx.IssueSSL(r.Context(), server, domain, req.SudoPassword); err != nil {
 		return Invalid(fields{"ssl": err.Error()})
 	}
 
@@ -409,12 +429,39 @@ func (s *Server) handleSyncDomain(w http.ResponseWriter, r *http.Request) error 
 		return Internal(errors.New("nginx manager not configured"))
 	}
 
-	if _, err := s.Nginx.Deploy(r.Context(), server, domain); err != nil {
+	var req struct {
+		SudoPassword string `json:"sudo_password"`
+		SaveSudo     bool   `json:"save_sudo"`
+	}
+	if r.ContentLength > 0 {
+		_ = DecodeJSON(w, r, &req)
+	}
+
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if _, err := s.Nginx.Deploy(r.Context(), server, domain, req.SudoPassword); err != nil {
 		_ = s.Store.UpdateDomainStatus(r.Context(), domain.ID, store.UpdateDomainParams{
 			Status:        store.DomainStatusError,
 			StatusMessage: err.Error(),
 		})
 		return Invalid(fields{"sync": err.Error()})
+	}
+
+	if domain.SSLMode == store.DomainSSLLetsEncrypt {
+		if err := s.Nginx.IssueSSL(r.Context(), server, domain, req.SudoPassword); err != nil {
+			_ = s.Store.UpdateDomainStatus(r.Context(), domain.ID, store.UpdateDomainParams{
+				Status:        store.DomainStatusError,
+				StatusMessage: err.Error(),
+			})
+			return Invalid(fields{"ssl": err.Error()})
+		}
+	} else {
+		_ = s.Store.UpdateDomainStatus(r.Context(), domain.ID, store.UpdateDomainParams{
+			Status:        store.DomainStatusActive,
+			StatusMessage: "",
+		})
 	}
 
 	refreshed, err := s.Store.DomainByID(r.Context(), domain.ID)

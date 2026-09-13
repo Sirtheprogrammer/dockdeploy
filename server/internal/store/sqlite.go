@@ -1009,6 +1009,39 @@ func (s *sqliteStore) UpdateServer(ctx context.Context, id, name, dockerSocket s
 	return s.ServerByID(ctx, id)
 }
 
+func (s *sqliteStore) SetServerSudoPassword(ctx context.Context, sealer Sealer, serverID, sudoPassword string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var oldSudoID *string
+		err := tx.QueryRowContext(ctx, `SELECT sudo_password_secret_id FROM servers WHERE id = $1`, serverID).Scan(&oldSudoID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return wrapSQLite("store: find server for sudo password", err)
+		}
+
+		var newSudoID *string
+		if sudoPassword != "" {
+			id, err := s.insertSecret(ctx, tx, sealer, KindSudoPassword, sudoPassword)
+			if err != nil {
+				return err
+			}
+			newSudoID = id
+		}
+
+		now := time.Now().UTC()
+		_, err = tx.ExecContext(ctx, `UPDATE servers SET sudo_password_secret_id = $1, updated_at = $2 WHERE id = $3`, newSudoID, now, serverID)
+		if err != nil {
+			return wrapSQLite("store: update server sudo password", err)
+		}
+
+		if oldSudoID != nil && (newSudoID == nil || *oldSudoID != *newSudoID) {
+			_, _ = tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = $1`, *oldSudoID)
+		}
+		return nil
+	})
+}
+
 func (s *sqliteStore) DeleteServer(ctx context.Context, id string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		var secID, passID, sudoID *string

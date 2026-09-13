@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -392,4 +394,130 @@ func (s *Server) handleRevokeServerAccess(w http.ResponseWriter, r *http.Request
 	AuditResource(r.Context(), "servers", server.ID)
 	AuditMeta(r.Context(), "revoked_from", userID)
 	return NoContent(w)
+}
+
+type setServerSudoPasswordRequest struct {
+	SudoPassword string `json:"sudo_password"`
+}
+
+func (s *Server) handleSetServerSudoPassword(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req setServerSudoPasswordRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	if err := s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword); err != nil {
+		return Internal(err)
+	}
+
+	// Trigger async probe in background to update server.Capabilities
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if srv, err := s.Store.ServerByID(ctx, server.ID); err == nil {
+			_, _ = s.Servers.Probe(ctx, srv)
+		}
+	}()
+
+	refreshed, err := s.Store.ServerByID(r.Context(), server.ID)
+	if err != nil {
+		return Internal(err)
+	}
+
+	AuditResource(r.Context(), "servers", server.ID)
+	AuditMeta(r.Context(), "action", "set_sudo_password")
+	return JSON(w, s.Log, http.StatusOK, newServerResponse(*refreshed))
+}
+
+type execRootRequest struct {
+	Command      string `json:"command"`
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
+}
+
+type execRootResponse struct {
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exit_code"`
+	Success  bool   `json:"success"`
+}
+
+func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req execRootRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	cmd := strings.TrimSpace(req.Command)
+	if cmd == "" {
+		return Invalid(fields{"command": "Command cannot be empty."})
+	}
+
+	// If save_sudo is requested and password provided, persist it
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	conn, err := s.Servers.Connect(r.Context(), server)
+	if err != nil {
+		return Internal(fmt.Errorf("connect to server: %w", err))
+	}
+	defer conn.Release()
+
+	cred, err := s.Store.ServerCredential(r.Context(), s.Sealer, server)
+	if err != nil {
+		return Internal(fmt.Errorf("read server credentials: %w", err))
+	}
+
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = cred.SudoPassword
+	}
+
+	var caps sshx.Capabilities
+	if len(server.Capabilities) > 0 {
+		_ = json.Unmarshal(server.Capabilities, &caps)
+	}
+
+	// Execute elevated command
+	var fullCmd string
+	if caps.SudoMode == sshx.SudoRoot {
+		fullCmd = cmd
+	} else if sudoPass != "" {
+		fullCmd = fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' sh -c %s", shellQuote(sudoPass), shellQuote(cmd))
+	} else if caps.SudoMode == sshx.SudoNoPassword {
+		fullCmd = "sudo -n sh -c " + shellQuote(cmd)
+	} else {
+		return Invalid(fields{"sudo_password": "Sudo password is required to execute root command on this server."})
+	}
+
+	res, runErr := conn.Run(r.Context(), fullCmd)
+	if runErr != nil && res.ExitCode == 0 {
+		return Internal(fmt.Errorf("execute command: %w", runErr))
+	}
+
+	AuditResource(r.Context(), "servers", server.ID)
+	AuditMeta(r.Context(), "action", "exec_root")
+	AuditMeta(r.Context(), "command", cmd)
+
+	return JSON(w, s.Log, http.StatusOK, execRootResponse{
+		Stdout:   res.Stdout,
+		Stderr:   res.Stderr,
+		ExitCode: res.ExitCode,
+		Success:  res.Ok(),
+	})
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
