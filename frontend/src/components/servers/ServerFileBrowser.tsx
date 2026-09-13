@@ -4,6 +4,8 @@ import {
   Download,
   File,
   FileArchive,
+  FileEdit,
+  FilePlus,
   Folder,
   FolderArchive,
   FolderUp,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react'
 import { useRef, useState, type FormEvent } from 'react'
 
+import { ServerFileEditor } from './ServerFileEditor'
 import { EmptyState } from '@/components/EmptyState'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -85,6 +88,11 @@ export function ServerFileBrowser({
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Editor state
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [editingFilePath, setEditingFilePath] = useState<string | null>(null)
+  const [isNewFile, setIsNewFile] = useState(false)
 
   // Transfer dialog state
   const [transferItem, setTransferItem] = useState<FileEntry | null>(null)
@@ -221,17 +229,31 @@ export function ServerFileBrowser({
 
         <div className="flex items-center gap-2">
           {canWrite && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setUploadDialogOpen(true)
-                upload.reset()
-              }}
-            >
-              <Upload className="size-3.5" aria-hidden />
-              Upload File
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditingFilePath(null)
+                  setIsNewFile(true)
+                  setEditorOpen(true)
+                }}
+              >
+                <FilePlus className="size-3.5" aria-hidden />
+                New File
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setUploadDialogOpen(true)
+                  upload.reset()
+                }}
+              >
+                <Upload className="size-3.5" aria-hidden />
+                Upload File
+              </Button>
+            </>
           )}
 
           <Button
@@ -397,7 +419,18 @@ export function ServerFileBrowser({
                           {entry.name}
                         </button>
                       ) : (
-                        <span className="text-foreground">{entry.name}</span>
+                        <button
+                          type="button"
+                          className="hover:underline text-foreground text-left font-mono font-medium"
+                          onClick={() => {
+                            setEditingFilePath(entry.path)
+                            setIsNewFile(false)
+                            setEditorOpen(true)
+                          }}
+                          title={canWrite ? 'Click to edit file' : 'Click to view file'}
+                        >
+                          {entry.name}
+                        </button>
                       )}
 
                       {entry.is_symlink && (
@@ -422,6 +455,23 @@ export function ServerFileBrowser({
 
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
+                      {!entry.is_dir && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => {
+                            setEditingFilePath(entry.path)
+                            setIsNewFile(false)
+                            setEditorOpen(true)
+                          }}
+                          title={canWrite ? 'Edit file in dashboard' : 'View file'}
+                        >
+                          <FileEdit className="size-3.5 mr-1" aria-hidden />
+                          {canWrite ? 'Edit' : 'View'}
+                        </Button>
+                      )}
+
                       {entry.is_dir ? (
                         <Button
                           asChild
@@ -641,6 +691,22 @@ export function ServerFileBrowser({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* File Editor Modal */}
+      <ServerFileEditor
+        server={server}
+        filePath={editingFilePath}
+        isOpen={editorOpen}
+        onClose={() => {
+          setEditorOpen(false)
+          setEditingFilePath(null)
+          setIsNewFile(false)
+        }}
+        canWrite={canWrite}
+        isNewFile={isNewFile}
+        initialDirectory={listing?.path || currentPath}
+        onSaved={() => void refetch()}
+      />
     </div>
   )
 }

@@ -454,3 +454,47 @@ export function serverArchiveDownloadURL(serverID: string, path: string): string
   return `/api/servers/${serverID}/files/archive?path=${encodeURIComponent(path)}`
 }
 
+export interface FileContent {
+  name: string
+  path: string
+  size: number
+  permissions: string
+  mod_time: string
+  is_binary: boolean
+  content: string
+}
+
+export function useFileContent(serverID: string, path: string | null) {
+  return useQuery<FileContent, ApiError>({
+    queryKey: ['servers', serverID, 'files', 'content', path],
+    queryFn: ({ signal }) =>
+      api.get<FileContent>(
+        `/servers/${serverID}/files/content?path=${encodeURIComponent(path || '')}`,
+        { signal },
+      ),
+    enabled: Boolean(serverID && path),
+  })
+}
+
+export function useSaveFileContent(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<
+    { path: string; size: number; saved: boolean },
+    ApiError,
+    { path: string; content: string }
+  >({
+    mutationFn: ({ path, content }) =>
+      api.put<{ path: string; size: number; saved: boolean }>(
+        `/servers/${serverID}/files/content`,
+        { path, content },
+      ),
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({
+        queryKey: ['servers', serverID, 'files', 'content', vars.path],
+      })
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+

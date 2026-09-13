@@ -49,6 +49,16 @@ type FileTransferResult struct {
 	DurationMs     int64  `json:"duration_ms"`
 }
 
+type FileContent struct {
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	Size        int64     `json:"size"`
+	Permissions string    `json:"permissions"`
+	ModTime     time.Time `json:"mod_time"`
+	IsBinary    bool      `json:"is_binary"`
+	Content     string    `json:"content"`
+}
+
 // resolvePath canonicalizes paths and resolves user home ~ relative to server environment.
 func (m *Manager) resolvePath(ctx context.Context, server *store.Server, path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
@@ -280,6 +290,125 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 		conn:    conn,
 	}
 	return reader, -1, filepath.Base(cleanPath), nil
+}
+
+// ReadFileContent reads the text content of a file up to maxBytes, detecting whether it's binary.
+func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, rawPath string, maxBytes int64) (*FileContent, error) {
+	if maxBytes <= 0 {
+		maxBytes = 5 * 1024 * 1024 // 5 MB default limit
+	}
+
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+
+	var modTime time.Time
+	var perms string
+	var size int64 = -1
+	var buf []byte
+
+	sftpClient, sftpErr := sftp.NewClient(conn.Client())
+	if sftpErr == nil {
+		defer sftpClient.Close()
+		fi, statErr := sftpClient.Stat(cleanPath)
+		if statErr == nil && !fi.IsDir() {
+			if fi.Size() > maxBytes {
+				return nil, fmt.Errorf("file size (%d bytes) exceeds editor limit (%d bytes)", fi.Size(), maxBytes)
+			}
+			f, openErr := sftpClient.Open(cleanPath)
+			if openErr == nil {
+				defer f.Close()
+				buf, err = io.ReadAll(io.LimitReader(f, maxBytes+1))
+				if err == nil {
+					size = fi.Size()
+					modTime = fi.ModTime().UTC()
+					perms = fmt.Sprintf("%04o", fi.Mode().Perm())
+				}
+			}
+		}
+	}
+
+	// Fallback via shell/sudo
+	if buf == nil {
+		// Get stat info
+		statCmd := fmt.Sprintf(`sudo stat -c "%%s|%%a|%%Y" "%s" 2>/dev/null`, escapeShell(cleanPath))
+		if statRes, err := conn.Run(ctx, statCmd); err == nil && statRes.Ok() {
+			parts := strings.Split(strings.TrimSpace(statRes.Output()), "|")
+			if len(parts) == 3 {
+				size, _ = strconv.ParseInt(parts[0], 10, 64)
+				perms = parts[1]
+				mtimeUnix, _ := strconv.ParseInt(parts[2], 10, 64)
+				modTime = time.Unix(mtimeUnix, 0).UTC()
+			}
+		}
+
+		if size > maxBytes {
+			return nil, fmt.Errorf("file size (%d bytes) exceeds editor limit (%d bytes)", size, maxBytes)
+		}
+
+		catCmd := fmt.Sprintf(`sudo cat "%s"`, escapeShell(cleanPath))
+		res, err := conn.Run(ctx, catCmd)
+		if err != nil {
+			return nil, fmt.Errorf("read file: %w", err)
+		}
+		if !res.Ok() {
+			return nil, fmt.Errorf("read file failed: %s", res.Stderr)
+		}
+		buf = []byte(res.Stdout)
+	}
+
+	if int64(len(buf)) > maxBytes {
+		return nil, fmt.Errorf("file size exceeds editor limit (%d bytes)", maxBytes)
+	}
+
+	isBinary := false
+	checkLen := len(buf)
+	if checkLen > 1024 {
+		checkLen = 1024
+	}
+	for i := 0; i < checkLen; i++ {
+		if buf[i] == 0 {
+			isBinary = true
+			break
+		}
+	}
+
+	content := ""
+	if !isBinary {
+		content = string(buf)
+	}
+
+	if size < 0 {
+		size = int64(len(buf))
+	}
+	if perms == "" {
+		perms = "0644"
+	}
+	if modTime.IsZero() {
+		modTime = time.Now().UTC()
+	}
+
+	return &FileContent{
+		Name:        filepath.Base(cleanPath),
+		Path:        cleanPath,
+		Size:        size,
+		Permissions: perms,
+		ModTime:     modTime,
+		IsBinary:    isBinary,
+		Content:     content,
+	}, nil
+}
+
+// WriteFileContent writes a string to a file on the server.
+func (m *Manager) WriteFileContent(ctx context.Context, server *store.Server, rawPath string, content string) error {
+	return m.UploadFile(ctx, server, rawPath, strings.NewReader(content), int64(len(content)), 0644)
 }
 
 // DownloadArchive streams a tar.gz archive of any directory (or volume) directly from the server.

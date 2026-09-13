@@ -198,3 +198,65 @@ func (s *Server) handleTransferFile(w http.ResponseWriter, r *http.Request) erro
 
 	return JSON(w, s.Log, http.StatusOK, result)
 }
+
+// handleGetFileContent reads text content and metadata for in-browser editing.
+func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		return BadRequest("Query parameter 'path' is required.")
+	}
+
+	content, err := s.Servers.ReadFileContent(r.Context(), server, path, 5*1024*1024)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return NotFound("File not found: %s", path)
+		}
+		return BadRequest("Failed to read file: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, content)
+}
+
+type saveFileRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// handleSaveFileContent writes edited text content back to the server.
+func (s *Server) handleSaveFileContent(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req saveFileRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	f := fields{}
+	path := f.required("path", req.Path, 1, 1024)
+	if err := f.err(); err != nil {
+		return err
+	}
+
+	if err := s.Servers.WriteFileContent(r.Context(), server, path, req.Content); err != nil {
+		return BadRequest("Failed to save file: %v", err).WithCause(err)
+	}
+
+	AuditMeta(r.Context(), "server_id", server.ID)
+	AuditMeta(r.Context(), "path", path)
+	AuditMeta(r.Context(), "bytes_written", len(req.Content))
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"path":  path,
+		"size":  len(req.Content),
+		"saved": true,
+	})
+}
+

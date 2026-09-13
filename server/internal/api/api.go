@@ -139,6 +139,8 @@ func (s *Server) Routes() (http.Handler, error) {
 			sv.guarded(http.MethodGet, "/{serverID}/files", auth.PermServerRead, s.handleListFiles)
 			sv.guarded(http.MethodGet, "/{serverID}/files/download", auth.PermServerRead, s.handleDownloadFile)
 			sv.guarded(http.MethodGet, "/{serverID}/files/archive", auth.PermServerRead, s.handleDownloadArchive)
+			sv.guarded(http.MethodGet, "/{serverID}/files/content", auth.PermServerRead, s.handleGetFileContent)
+			sv.guarded(http.MethodPut, "/{serverID}/files/content", auth.PermServerWrite, s.handleSaveFileContent)
 			sv.guarded(http.MethodPost, "/{serverID}/files/upload", auth.PermServerWrite, s.handleUploadFile)
 			sv.guarded(http.MethodPost, "/{serverID}/files/transfer", auth.PermServerWrite, s.handleTransferFile)
 		})
