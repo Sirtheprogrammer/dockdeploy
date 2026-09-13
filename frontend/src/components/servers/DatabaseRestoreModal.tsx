@@ -208,7 +208,7 @@ function DatabaseRestoreForm({
 
           {/* Mode & Target */}
           {engine !== 'sqlite' && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-zinc-300">Target Environment</Label>
                 <div className="flex gap-2">
@@ -285,7 +285,7 @@ function DatabaseRestoreForm({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="restore-dbname" className="text-xs font-medium text-zinc-300">
                   Target Database Name
@@ -473,7 +473,7 @@ export function DatabaseRestoreModal({
 }: DatabaseRestoreModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
         {open && (
           <DatabaseRestoreForm
             key={selectedBackup?.path ?? 'restore-form'}

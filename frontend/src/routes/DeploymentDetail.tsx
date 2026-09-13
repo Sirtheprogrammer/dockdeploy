@@ -133,7 +133,7 @@ export function DeploymentDetail() {
         title={deployment.data.name}
         description={SOURCE_LABELS[deployment.data.source_type]}
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {canDeploy ? (
               <Button
                 size="sm"
@@ -172,11 +172,11 @@ export function DeploymentDetail() {
                 Delete
               </Button>
             ) : null}
-          </>
+          </div>
         }
       />
 
-      <div className="space-y-6 p-6">
+      <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
         {deploy.isError ? <Alert variant="danger">{deploy.error.message}</Alert> : null}
         {cancel.isError ? <Alert variant="danger">{cancel.error.message}</Alert> : null}
 

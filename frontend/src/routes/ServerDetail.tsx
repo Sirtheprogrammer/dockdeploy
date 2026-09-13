@@ -114,7 +114,7 @@ export function ServerDetail() {
         title={server.data.name}
         description={`${server.data.username}@${server.data.host}${server.data.port !== 22 ? `:${server.data.port}` : ''}`}
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
             {canWrite && !caps?.docker_socket_ok ? (
               <Button
                 variant="outline"
@@ -175,11 +175,11 @@ export function ServerDetail() {
                 Remove
               </Button>
             ) : null}
-          </>
+          </div>
         }
       />
 
-      <div className="space-y-6 p-6">
+      <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
         <div className="flex flex-wrap items-center gap-3">
           <ServerStatusBadge status={server.data.status} />
           {info.data ? (

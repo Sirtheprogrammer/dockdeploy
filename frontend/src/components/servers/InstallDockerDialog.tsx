@@ -90,7 +90,7 @@ export function InstallDockerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
         <form onSubmit={handleSubmit} className="space-y-4">
           <DialogHeader>
             <div className="flex items-center gap-2.5">
@@ -109,9 +109,9 @@ export function InstallDockerDialog({
             </div>
           </DialogHeader>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-300 space-y-2">
-            <p className="font-medium text-zinc-200">
-              This automated installer performs the official Docker setup:
+          <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3.5 text-xs text-blue-200 space-y-2">
+            <p className="font-medium text-blue-300">
+              This automated installer prepares the remote server with the official Docker Engine:
             </p>
             <ul className="list-disc pl-4 space-y-1 text-zinc-400">
               <li>Installs Docker Engine, containerd, and Compose plugin via official Docker channels.</li>
@@ -123,7 +123,7 @@ export function InstallDockerDialog({
 
           <div className="space-y-2">
             <Label className="text-xs font-medium text-zinc-300">Installation Method</Label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setMethod('script')}

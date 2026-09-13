@@ -62,7 +62,7 @@ export function Deployments() {
         }
       />
 
-      <div className="p-6">
+      <div className="p-4 sm:p-6 lg:p-8">
         {isError ? <Alert variant="danger">{error.message}</Alert> : null}
 
         {isPending ? (
@@ -115,23 +115,23 @@ export function Deployments() {
                   </p>
                 </div>
 
-                <dl className="text-muted-foreground flex shrink-0 items-center gap-6 text-xs">
+                <dl className="text-muted-foreground grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center sm:gap-6 text-xs w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0">
                   <div>
-                    <dt className="mb-0.5">Server</dt>
-                    <dd className="text-foreground">{deployment.server_name ?? '—'}</dd>
+                    <dt className="text-[10px] sm:text-xs mb-0.5 text-muted-foreground/80 sm:text-muted-foreground">Server</dt>
+                    <dd className="text-foreground font-medium sm:font-normal truncate">{deployment.server_name ?? '—'}</dd>
                   </div>
                   <div>
-                    <dt className="mb-0.5">Source</dt>
+                    <dt className="text-[10px] sm:text-xs mb-0.5 text-muted-foreground/80 sm:text-muted-foreground">Source</dt>
                     <dd className="text-foreground">{SOURCE_SHORT[deployment.source_type]}</dd>
                   </div>
                   <div>
-                    <dt className="mb-0.5">Port</dt>
+                    <dt className="text-[10px] sm:text-xs mb-0.5 text-muted-foreground/80 sm:text-muted-foreground">Port</dt>
                     <dd className="text-foreground tabular">
                       {deployment.host_port ?? '—'}
                     </dd>
                   </div>
                   <div>
-                    <dt className="mb-0.5">Updated</dt>
+                    <dt className="text-[10px] sm:text-xs mb-0.5 text-muted-foreground/80 sm:text-muted-foreground">Updated</dt>
                     <dd className="text-foreground">{formatRelative(deployment.updated_at)}</dd>
                   </div>
                 </dl>

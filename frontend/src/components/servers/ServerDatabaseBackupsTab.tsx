@@ -109,7 +109,7 @@ export function ServerDatabaseBackupsTab({ server, canWrite }: ServerDatabaseBac
                 Multi-engine database tools supporting PostgreSQL, MySQL, MongoDB, Redis, and SQLite
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="sm"
@@ -239,21 +239,21 @@ export function ServerDatabaseBackupsTab({ server, canWrite }: ServerDatabaseBac
             Saved Database Backups
           </h3>
 
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-44">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-zinc-500" />
               <Input
                 placeholder="Search backups..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 w-44 pl-8 bg-zinc-900 border-zinc-800 text-xs text-zinc-100"
+                className="h-8 w-full sm:w-44 pl-8 bg-zinc-900 border-zinc-800 text-xs text-zinc-100"
               />
             </div>
 
             <select
               value={engineFilter}
               onChange={(e) => setEngineFilter(e.target.value)}
-              className="h-8 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-300 focus:outline-none"
+              className="h-8 shrink-0 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-xs text-zinc-300 focus:outline-none"
             >
               <option value="all">All Engines</option>
               <option value="postgres">PostgreSQL</option>
@@ -295,7 +295,67 @@ export function ServerDatabaseBackupsTab({ server, canWrite }: ServerDatabaseBac
           </div>
         ) : (
           <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
-            <div className="overflow-x-auto">
+            {/* Mobile Card View (sm:hidden) */}
+            <div className="divide-y divide-zinc-800/60 sm:hidden">
+              {filteredBackups.map((b) => {
+                const badge = ENGINE_BADGES[b.engine] || {
+                  label: b.engine,
+                  className: 'bg-zinc-800 text-zinc-300',
+                }
+                return (
+                  <div key={b.path} className="p-3.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={`text-[10px] px-2 py-0.5 ${badge.className}`}>
+                          {badge.label}
+                        </Badge>
+                        <span className="font-semibold text-xs text-zinc-200">
+                          {b.database_name}
+                        </span>
+                      </div>
+                      <span className="text-xs text-zinc-300 font-mono font-medium">
+                        {formatBytes(b.size_bytes)}
+                      </span>
+                    </div>
+
+                    <div className="font-mono text-[11px] text-zinc-400 truncate" title={b.path}>
+                      {b.filename}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 border-t border-zinc-900 text-xs">
+                      <span className="text-zinc-500 text-[11px]">
+                        {formatRelative(b.created_at)}
+                      </span>
+
+                      {canWrite && (
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleOpenRestore(b)}
+                            className="h-7 px-2.5 text-xs border-zinc-700 hover:border-amber-500 hover:text-amber-400"
+                          >
+                            <RotateCcw className="mr-1 size-3 text-amber-400" />
+                            Restore
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDelete(b)}
+                            className="h-7 px-2 text-xs text-zinc-500 hover:text-rose-400"
+                          >
+                            <Trash2 className="size-3" />
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Desktop Table View (hidden sm:block) */}
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-zinc-800 bg-zinc-900/50 text-zinc-400 font-medium">
                   <tr>

@@ -25,7 +25,7 @@ export function Servers() {
         title="Servers"
         description="Machines dockdeploy manages over SSH."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {servers && servers.length > 0 && canAdd ? (
               <Button
                 variant="outline"
@@ -46,7 +46,7 @@ export function Servers() {
         }
       />
 
-      <div className="p-6 lg:p-8">
+      <div className="p-4 sm:p-6 lg:p-8">
         {isError ? <Alert variant="danger">{error.message}</Alert> : null}
 
         {autoDetectAll.isSuccess ? (

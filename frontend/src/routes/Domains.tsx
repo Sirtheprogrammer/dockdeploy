@@ -109,21 +109,21 @@ export function Domains() {
         }
       />
 
-      <div className="space-y-4">
+      <div className="p-4 sm:p-6 lg:p-8 space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative max-w-sm flex-1">
+          <div className="relative w-full sm:max-w-sm flex-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Filter domains..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 text-sm"
+              className="pl-9 text-sm w-full"
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Select value={selectedServer} onValueChange={setSelectedServer}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="All servers" />
               </SelectTrigger>
               <SelectContent>
@@ -157,7 +157,179 @@ export function Domains() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-md border bg-card">
-            <Table>
+            {/* Mobile Card List (sm:hidden) */}
+            <div className="divide-y sm:hidden">
+              {filteredDomains.map((domain) => {
+                const isSyncing = syncMutation.isPending && syncMutation.variables === domain.id
+                const isIssuing = issueSSLMutation.isPending && issueSSLMutation.variables === domain.id
+                const isDeleting = deleteMutation.isPending && deleteMutation.variables === domain.id
+                return (
+                  <div key={domain.id} className="p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="font-mono text-xs font-semibold truncate">{domain.hostname}</span>
+                        <a
+                          href={`${domain.ssl_mode === 'letsencrypt' ? 'https' : 'http'}://${domain.hostname}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-muted-foreground hover:text-foreground shrink-0"
+                          aria-label={`Open ${domain.hostname}`}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+
+                      <div className="shrink-0">
+                        {domain.status === 'active' ? (
+                          <Badge variant="success" className="flex items-center gap-1 text-[11px]">
+                            <CheckCircle2 className="h-3 w-3" />
+                            Active
+                          </Badge>
+                        ) : domain.status === 'error' ? (
+                          <Badge variant="danger" className="flex items-center gap-1 text-[11px]">
+                            <AlertCircle className="h-3 w-3" />
+                            Error
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="flex items-center gap-1 text-[11px]">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Pending
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs bg-muted/40 rounded-lg p-2.5">
+                      <div>
+                        <span className="text-muted-foreground block text-[10px] uppercase">Server</span>
+                        <Link
+                          to={`/servers/${domain.server_id}`}
+                          className="text-foreground hover:underline font-medium truncate block mt-0.5"
+                        >
+                          {domain.server_name || domain.server_id.slice(0, 8)}
+                        </Link>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block text-[10px] uppercase">Upstream</span>
+                        <span className="font-mono text-foreground block mt-0.5 truncate">
+                          :{domain.upstream_port}
+                          {domain.websocket && (
+                            <Badge variant="outline" className="ml-1 text-[9px] px-1 py-0">WS</Badge>
+                          )}
+                        </span>
+                      </div>
+                      {domain.deployment_id && (
+                        <div>
+                          <span className="text-muted-foreground block text-[10px] uppercase">Deployment</span>
+                          <Link
+                            to={`/deployments/${domain.deployment_id}`}
+                            className="text-foreground hover:underline font-medium truncate block mt-0.5"
+                          >
+                            {domain.deployment_name || 'Deployment'}
+                          </Link>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-muted-foreground block text-[10px] uppercase">SSL</span>
+                        <span className="text-foreground flex items-center gap-1 mt-0.5">
+                          {domain.ssl_mode === 'letsencrypt' ? (
+                            domain.cert_expires_at ? (
+                              <>
+                                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                                <span className="truncate">{formatExpiration(domain.cert_expires_at)}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                                <span>Pending</span>
+                              </>
+                            )
+                          ) : (
+                            <span className="text-muted-foreground">HTTP only</span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Card Actions */}
+                    <div className="flex items-center justify-end gap-1.5 pt-1 border-t">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1"
+                        onClick={() => setConfigDomain(domain)}
+                      >
+                        <FileCode className="h-3.5 w-3.5" />
+                        Config
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1"
+                        disabled={isSyncing}
+                        onClick={() => syncMutation.mutate(domain.id)}
+                      >
+                        {isSyncing ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        Sync
+                      </Button>
+                      {domain.status === 'error' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs gap-1 text-amber-500 border-amber-500/30"
+                          onClick={() => setSudoActionDomain(domain)}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                          Sudo
+                        </Button>
+                      )}
+                      {domain.ssl_mode === 'letsencrypt' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs gap-1"
+                          disabled={isIssuing}
+                          onClick={() => issueSSLMutation.mutate(domain.id)}
+                        >
+                          {isIssuing ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ShieldAlert className="h-3.5 w-3.5" />
+                          )}
+                          SSL
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-muted-foreground hover:text-destructive"
+                        disabled={isDeleting}
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Delete domain "${domain.hostname}"?\n\nThis will remove the Nginx virtual host configuration from the server and stop routing traffic for this domain.`,
+                            )
+                          ) {
+                            deleteMutation.mutate(domain.id)
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Desktop Table View (hidden sm:block) */}
+            <div className="hidden sm:block overflow-x-auto">
+              <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Hostname</TableHead>
@@ -360,7 +532,8 @@ export function Domains() {
               </TableBody>
             </Table>
           </div>
-        )}
+        </div>
+      )}
       </div>
 
       <ViewConfigDialog

@@ -19,7 +19,7 @@ export function SettingsLayout() {
     <>
       <PageHeader title="Settings" description="Your account and this instance." />
 
-      <div className="scrollbar-thin flex items-center gap-1 overflow-x-auto border-b px-6">
+      <div className="scrollbar-thin flex items-center gap-1 overflow-x-auto border-b px-4 sm:px-6">
         {tabs.map(({ to, label, end }) => (
           <NavLink
             key={to}
@@ -39,7 +39,7 @@ export function SettingsLayout() {
         ))}
       </div>
 
-      <div className="p-6">
+      <div className="p-4 sm:p-6 lg:p-8">
         <Outlet />
       </div>
     </>

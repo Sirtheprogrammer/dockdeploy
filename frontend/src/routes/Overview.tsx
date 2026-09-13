@@ -77,8 +77,8 @@ export function Overview() {
         description="Health of this control plane and everything it manages."
       />
 
-      <div className="space-y-6 p-6 lg:p-8">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="space-y-4 sm:space-y-6 p-4 sm:p-6 lg:p-8">
+        <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
           <Stat
             icon={Activity}
             label="Control plane"

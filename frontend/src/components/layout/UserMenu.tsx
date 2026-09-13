@@ -10,7 +10,7 @@ function initials(name: string): string {
   return parts.map((part) => part[0]?.toUpperCase() ?? '').join('') || '?'
 }
 
-export function UserMenu() {
+export function UserMenu({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate()
   const { data: user } = useSession()
   const logout = useLogout()
@@ -22,22 +22,32 @@ export function UserMenu() {
 
   return (
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="hover:bg-accent/50 focus-visible:outline-ring flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors focus-visible:outline-2">
+      <DropdownMenu.Trigger
+        className={cn(
+          'hover:bg-accent/50 focus-visible:outline-ring flex items-center rounded-md transition-colors focus-visible:outline-2',
+          compact ? 'p-1' : 'w-full gap-2 px-1.5 py-1.5 text-left',
+        )}
+        aria-label="User menu"
+      >
         <span className="bg-primary/15 text-primary flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-medium">
           {initials(user.name)}
         </span>
-        <span className="min-w-0 flex-1 leading-tight">
-          <span className="block truncate text-xs font-medium">{user.name}</span>
-          <span className="text-muted-foreground block truncate text-[11px]">
-            {ROLE_LABELS[user.role]}
-          </span>
-        </span>
-        <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+        {!compact && (
+          <>
+            <span className="min-w-0 flex-1 leading-tight">
+              <span className="block truncate text-xs font-medium">{user.name}</span>
+              <span className="text-muted-foreground block truncate text-[11px]">
+                {ROLE_LABELS[user.role]}
+              </span>
+            </span>
+            <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" aria-hidden />
+          </>
+        )}
       </DropdownMenu.Trigger>
 
       <DropdownMenu.Portal>
         <DropdownMenu.Content
-          align="start"
+          align={compact ? 'end' : 'start'}
           sideOffset={6}
           className="bg-popover text-popover-foreground z-50 min-w-56 rounded-md border p-1 shadow-md"
         >
