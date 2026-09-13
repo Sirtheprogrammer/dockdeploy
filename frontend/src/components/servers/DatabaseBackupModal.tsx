@@ -7,7 +7,7 @@ import {
   EyeOff,
   Loader2,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -50,16 +50,25 @@ const ENGINE_LABELS: Record<DatabaseEngine, { name: string; color: string; desc:
   sqlite: { name: 'SQLite', color: 'bg-purple-500/10 text-purple-400 border-purple-500/20', desc: 'Online vacuum backup / atomic copy' },
 }
 
-export function DatabaseBackupModal({
+interface DatabaseBackupFormProps {
+  server: Server
+  containers: DiscoveredDatabaseContainer[]
+  defaultBackupDir: string
+  initialEngine?: DatabaseEngine
+  initialContainer?: string
+  onClose: () => void
+  onSuccess?: () => void
+}
+
+function DatabaseBackupForm({
   server,
   containers,
   defaultBackupDir,
-  open,
-  onOpenChange,
-  onSuccess,
   initialEngine = 'postgres',
   initialContainer = '',
-}: DatabaseBackupModalProps) {
+  onClose,
+  onSuccess,
+}: DatabaseBackupFormProps) {
   const [engine, setEngine] = useState<DatabaseEngine>(initialEngine)
   const [mode, setMode] = useState<DatabaseExecutionMode>('container')
   const [containerName, setContainerName] = useState(initialContainer)
@@ -75,14 +84,6 @@ export function DatabaseBackupModal({
   const [result, setResult] = useState<CreateDatabaseBackupResult | null>(null)
 
   const createBackup = useCreateDatabaseBackup(server.id)
-
-  useEffect(() => {
-    if (initialEngine) setEngine(initialEngine)
-    if (initialContainer) {
-      setContainerName(initialContainer)
-      setMode('container')
-    }
-  }, [initialEngine, initialContainer])
 
   // Filter available containers for current engine
   const matchingContainers = containers.filter((c) => c.engine === engine)
@@ -118,9 +119,7 @@ export function DatabaseBackupModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4">
           <DialogHeader>
             <div className="flex items-center gap-2.5">
               <div className="flex size-9 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
@@ -392,7 +391,7 @@ export function DatabaseBackupModal({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={onClose}
               className="border-zinc-800 text-zinc-300 hover:bg-zinc-900"
             >
               Close
@@ -416,6 +415,34 @@ export function DatabaseBackupModal({
             </Button>
           </DialogFooter>
         </form>
+  )
+}
+
+export function DatabaseBackupModal({
+  server,
+  containers,
+  defaultBackupDir,
+  open,
+  onOpenChange,
+  onSuccess,
+  initialEngine = 'postgres',
+  initialContainer = '',
+}: DatabaseBackupModalProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
+        {open && (
+          <DatabaseBackupForm
+            key={`${initialEngine}-${initialContainer}`}
+            server={server}
+            containers={containers}
+            defaultBackupDir={defaultBackupDir}
+            initialEngine={initialEngine}
+            initialContainer={initialContainer}
+            onClose={() => onOpenChange(false)}
+            onSuccess={onSuccess}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )

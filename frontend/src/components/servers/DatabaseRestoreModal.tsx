@@ -7,7 +7,7 @@ import {
   Loader2,
   RotateCcw,
 } from 'lucide-react'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 
 import { Alert } from '@/components/ui/alert'
@@ -43,31 +43,45 @@ interface DatabaseRestoreModalProps {
 }
 
 const ENGINE_LABELS: Record<DatabaseEngine, { name: string; desc: string }> = {
-  postgres: { name: 'PostgreSQL', desc: 'psql gunzip stream restore' },
-  mysql: { name: 'MySQL / MariaDB', desc: 'mysql gunzip stream restore' },
+  postgres: { name: 'PostgreSQL', desc: 'psql streaming decompression into target DB' },
+  mysql: { name: 'MySQL / MariaDB', desc: 'mysql client streaming restore' },
   mongo: { name: 'MongoDB', desc: 'mongorestore --archive --gzip' },
-  redis: { name: 'Redis', desc: 'docker cp dump.rdb with container restart' },
+  redis: { name: 'Redis', desc: 'Safe container snapshot replacement & restart' },
   sqlite: { name: 'SQLite', desc: 'Atomic file restore with pre-restore .bak safety copy' },
 }
 
-export function DatabaseRestoreModal({
+interface DatabaseRestoreFormProps {
+  server: Server
+  containers: DiscoveredDatabaseContainer[]
+  selectedBackup?: DatabaseBackupFile | null
+  onClose: () => void
+  onSuccess?: () => void
+}
+
+function DatabaseRestoreForm({
   server,
   containers,
-  open,
-  onOpenChange,
-  onSuccess,
   selectedBackup,
-}: DatabaseRestoreModalProps) {
-  const [engine, setEngine] = useState<DatabaseEngine>('postgres')
+  onClose,
+  onSuccess,
+}: DatabaseRestoreFormProps) {
+  const initialEngine: DatabaseEngine = selectedBackup?.engine ?? 'postgres'
+  const matchingInitial = containers.find((c) => c.engine === initialEngine)
+
+  const [engine, setEngine] = useState<DatabaseEngine>(initialEngine)
   const [mode, setMode] = useState<DatabaseExecutionMode>('container')
-  const [containerName, setContainerName] = useState('')
-  const [databaseName, setDatabaseName] = useState('')
+  const [containerName, setContainerName] = useState(matchingInitial ? matchingInitial.name : '')
+  const [databaseName, setDatabaseName] = useState(
+    selectedBackup?.database_name && selectedBackup.database_name !== 'database'
+      ? selectedBackup.database_name
+      : ''
+  )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [authDatabase, setAuthDatabase] = useState('admin')
   const [sqlitePath, setSqlitePath] = useState('')
-  const [backupPath, setBackupPath] = useState('')
+  const [backupPath, setBackupPath] = useState(selectedBackup?.path ?? '')
   const [dropExisting, setDropExisting] = useState(true)
   const [confirmed, setConfirmed] = useState(false)
   const [sudoPassword, setSudoPassword] = useState('')
@@ -75,21 +89,6 @@ export function DatabaseRestoreModal({
   const [result, setResult] = useState<RestoreDatabaseBackupResult | null>(null)
 
   const restoreBackup = useRestoreDatabaseBackup(server.id)
-
-  useEffect(() => {
-    if (selectedBackup) {
-      setEngine(selectedBackup.engine)
-      setBackupPath(selectedBackup.path)
-      if (selectedBackup.database_name && selectedBackup.database_name !== 'database') {
-        setDatabaseName(selectedBackup.database_name)
-      }
-      const matching = containers.filter((c) => c.engine === selectedBackup.engine)
-      if (matching.length > 0 && matching[0]) {
-        setContainerName(matching[0].name)
-        setMode('container')
-      }
-    }
-  }, [selectedBackup, containers])
 
   const matchingContainers = containers.filter((c) => c.engine === engine)
 
@@ -129,25 +128,23 @@ export function DatabaseRestoreModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <DialogHeader>
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400">
-                <RotateCcw className="size-5" />
-              </div>
-              <div>
-                <DialogTitle className="text-base text-zinc-100">
-                  Restore Database from Backup
-                </DialogTitle>
-                <DialogDescription className="text-xs text-zinc-400">
-                  Restore backup data to target database on{' '}
-                  <span className="font-mono text-zinc-200">{server.name}</span>
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <DialogHeader>
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-9 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400">
+            <RotateCcw className="size-5" />
+          </div>
+          <div>
+            <DialogTitle className="text-base text-zinc-100">
+              Restore Database from Backup
+            </DialogTitle>
+            <DialogDescription className="text-xs text-zinc-400">
+              Restore backup data to target database on{' '}
+              <span className="font-mono text-zinc-200">{server.name}</span>
+            </DialogDescription>
+          </div>
+        </div>
+      </DialogHeader>
 
           {/* Critical Warning */}
           <Alert variant="warning" className="text-xs flex gap-2 border-amber-500/30 bg-amber-500/10 text-amber-200">
@@ -439,7 +436,7 @@ export function DatabaseRestoreModal({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={onClose}
               className="border-zinc-800 text-zinc-300 hover:bg-zinc-900"
             >
               Close
@@ -463,6 +460,30 @@ export function DatabaseRestoreModal({
             </Button>
           </DialogFooter>
         </form>
+  )
+}
+
+export function DatabaseRestoreModal({
+  server,
+  containers,
+  open,
+  onOpenChange,
+  onSuccess,
+  selectedBackup,
+}: DatabaseRestoreModalProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-6 bg-zinc-950 border-zinc-800 text-zinc-100">
+        {open && (
+          <DatabaseRestoreForm
+            key={selectedBackup?.path ?? 'restore-form'}
+            server={server}
+            containers={containers}
+            selectedBackup={selectedBackup}
+            onClose={() => onOpenChange(false)}
+            onSuccess={onSuccess}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )
