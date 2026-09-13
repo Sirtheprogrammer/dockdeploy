@@ -33,7 +33,13 @@ function Row({ label, value, ok }: { label: string; value: string; ok: boolean }
  * Docker but no nginx is perfectly usable for deployments, and only the
  * warnings explain what will not work.
  */
-export function CapabilityList({ capabilities }: { capabilities: Capabilities | null }) {
+export function CapabilityList({
+  capabilities,
+  onInstallDocker,
+}: {
+  capabilities: Capabilities | null
+  onInstallDocker?: () => void
+}) {
   if (!capabilities) {
     return (
       <Alert variant="danger">
@@ -46,12 +52,47 @@ export function CapabilityList({ capabilities }: { capabilities: Capabilities | 
 
   return (
     <div className="space-y-3">
+      {!capabilities.docker_socket_ok && onInstallDocker ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-xs">
+          <div className="text-blue-200">
+            <span className="font-semibold">Docker is not running on this server.</span>
+            <p className="text-[11px] text-blue-300/80 mt-0.5">
+              Install Docker Engine and Compose using the official installer.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onInstallDocker}
+            className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 transition-colors"
+          >
+            Install Docker
+          </button>
+        </div>
+      ) : null}
+
       <div className="divide-y rounded-md border px-4 py-1">
-        <Row
-          label="Docker"
-          value={capabilities.docker_version || 'not found'}
-          ok={capabilities.docker_socket_ok}
-        />
+        <div className="flex items-center justify-between gap-3 py-1.5 text-sm">
+          <span className="text-muted-foreground">Docker</span>
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 font-mono text-xs">
+              {capabilities.docker_socket_ok ? (
+                <Check className="text-success size-3.5" aria-hidden />
+              ) : (
+                <Minus className="text-muted-foreground size-3.5" aria-hidden />
+              )}
+              {capabilities.docker_version || 'not found'}
+            </span>
+            {!capabilities.docker_socket_ok && onInstallDocker ? (
+              <button
+                type="button"
+                onClick={onInstallDocker}
+                className="text-[11px] font-medium text-blue-400 hover:text-blue-300 underline underline-offset-2"
+              >
+                Install
+              </button>
+            ) : null}
+          </div>
+        </div>
         <Row
           label="Compose"
           value={

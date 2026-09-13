@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router'
 import { FieldError } from '@/components/AuthLayout'
 import { CapabilityList } from '@/components/servers/CapabilityList'
 import { DiscoverySummaryView } from '@/components/servers/AutoDetectDialog'
+import { InstallDockerDialog } from '@/components/servers/InstallDockerDialog'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,6 +48,7 @@ export function AddServerDialog() {
   const [fingerprint, setFingerprint] = useState('')
   const [keyType, setKeyType] = useState('')
   const [result, setResult] = useState<CreateServerResult | null>(null)
+  const [installDockerOpen, setInstallDockerOpen] = useState(false)
 
   const probe = useFingerprint()
   const create = useCreateServer()
@@ -64,6 +66,7 @@ export function AddServerDialog() {
     setFingerprint('')
     setKeyType('')
     setResult(null)
+    setInstallDockerOpen(false)
     probe.reset()
     create.reset()
   }
@@ -341,7 +344,10 @@ export function AddServerDialog() {
               <DialogDescription>Here is what dockdeploy found on it.</DialogDescription>
             </DialogHeader>
 
-            <CapabilityList capabilities={result.capabilities as Capabilities | null} />
+            <CapabilityList
+              capabilities={result.capabilities as Capabilities | null}
+              onInstallDocker={() => setInstallDockerOpen(true)}
+            />
 
             {result.discovery ? (
               <div className="border-t pt-3">
@@ -349,6 +355,16 @@ export function AddServerDialog() {
                 <DiscoverySummaryView report={result.discovery} />
               </div>
             ) : null}
+
+            <InstallDockerDialog
+              server={result.server}
+              open={installDockerOpen}
+              onOpenChange={setInstallDockerOpen}
+              onSuccess={() => {
+                setOpen(false)
+                void navigate(`/servers/${result.server.id}`)
+              }}
+            />
 
             <DialogFooter>
               <Button variant="outline" onClick={reset}>

@@ -460,39 +460,17 @@ type execRootResponse struct {
 	Success  bool   `json:"success"`
 }
 
-func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
-	server, err := s.requireServer(r)
+func (s *Server) runElevated(ctx context.Context, server *store.Server, conn *sshx.Conn, cmd, sudoPassword string, saveSudo bool) (sshx.Result, error) {
+	if saveSudo && sudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(ctx, s.Sealer, server.ID, sudoPassword)
+	}
+
+	cred, err := s.Store.ServerCredential(ctx, s.Sealer, server)
 	if err != nil {
-		return err
+		return sshx.Result{}, fmt.Errorf("read server credentials: %w", err)
 	}
 
-	var req execRootRequest
-	if err := DecodeJSON(w, r, &req); err != nil {
-		return err
-	}
-
-	cmd := strings.TrimSpace(req.Command)
-	if cmd == "" {
-		return Invalid(fields{"command": "Command cannot be empty."})
-	}
-
-	// If save_sudo is requested and password provided, persist it
-	if req.SaveSudo && req.SudoPassword != "" {
-		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
-	}
-
-	conn, err := s.Servers.Connect(r.Context(), server)
-	if err != nil {
-		return Internal(fmt.Errorf("connect to server: %w", err))
-	}
-	defer conn.Release()
-
-	cred, err := s.Store.ServerCredential(r.Context(), s.Sealer, server)
-	if err != nil {
-		return Internal(fmt.Errorf("read server credentials: %w", err))
-	}
-
-	sudoPass := req.SudoPassword
+	sudoPass := sudoPassword
 	if sudoPass == "" {
 		sudoPass = cred.SudoPassword
 	}
@@ -511,12 +489,45 @@ func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
 	} else if caps.SudoMode == sshx.SudoNoPassword {
 		fullCmd = "sudo -n sh -c " + shellQuote(cmd)
 	} else {
-		return Invalid(fields{"sudo_password": "Sudo password is required to execute root command on this server."})
+		return sshx.Result{}, Invalid(fields{"sudo_password": "Sudo password is required to execute root command on this server."})
 	}
 
-	res, runErr := conn.Run(r.Context(), fullCmd)
+	res, runErr := conn.Run(ctx, fullCmd)
 	if runErr != nil && res.ExitCode == 0 {
-		return Internal(fmt.Errorf("execute command: %w", runErr))
+		return res, fmt.Errorf("execute command: %w", runErr)
+	}
+	return res, nil
+}
+
+func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req execRootRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	cmd := strings.TrimSpace(req.Command)
+	if cmd == "" {
+		return Invalid(fields{"command": "Command cannot be empty."})
+	}
+
+	conn, err := s.Servers.Connect(r.Context(), server)
+	if err != nil {
+		return Internal(fmt.Errorf("connect to server: %w", err))
+	}
+	defer conn.Release()
+
+	res, runErr := s.runElevated(r.Context(), server, conn, cmd, req.SudoPassword, req.SaveSudo)
+	if runErr != nil {
+		var fErr *Error
+		if errors.As(runErr, &fErr) {
+			return runErr
+		}
+		return Internal(runErr)
 	}
 
 	AuditResource(r.Context(), "servers", server.ID)
@@ -528,6 +539,145 @@ func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
 		Stderr:   res.Stderr,
 		ExitCode: res.ExitCode,
 		Success:  res.Ok(),
+	})
+}
+
+type installDockerRequest struct {
+	Method       string `json:"method"` // "script" (official get.docker.com script) or "repo" (official debian/ubuntu repo)
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
+}
+
+type installDockerResponse struct {
+	Stdout       string             `json:"stdout"`
+	Stderr       string             `json:"stderr"`
+	ExitCode     int                `json:"exit_code"`
+	Success      bool               `json:"success"`
+	Capabilities *sshx.Capabilities `json:"capabilities,omitempty"`
+}
+
+func (s *Server) handleInstallDocker(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req installDockerRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	conn, err := s.Servers.Connect(r.Context(), server)
+	if err != nil {
+		return Internal(fmt.Errorf("connect to server: %w", err))
+	}
+	defer conn.Release()
+
+	// 10 minutes timeout for package downloads and installation
+	installCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	defer cancel()
+
+	targetUser := server.Username
+	if targetUser == "" {
+		targetUser = "root"
+	}
+
+	var script string
+	if req.Method == "repo" {
+		// Official Debian/Ubuntu repository installation guide from docs.docker.com
+		script = fmt.Sprintf(`set -e
+export DEBIAN_FRONTEND=noninteractive
+echo "==> Setting up official Docker repository..."
+apt-get update
+apt-get install -y ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/$(. /etc/os-release && echo "$ID")/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$(. /etc/os-release && echo "$ID") $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt-get update
+echo "==> Installing Docker Engine and Compose plugins..."
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker || service docker start || true
+if [ %[1]s != "root" ]; then
+    echo "==> Adding %[1]s to docker group..."
+    usermod -aG docker %[1]s || true
+fi
+if [ -S /var/run/docker.sock ]; then
+    chmod 666 /var/run/docker.sock || true
+fi
+echo "==> Docker installed successfully:"
+docker --version
+docker compose version || true
+`, shellQuote(targetUser))
+	} else {
+		// Official Docker convenience script (https://get.docker.com)
+		script = fmt.Sprintf(`set -e
+export DEBIAN_FRONTEND=noninteractive
+echo "==> Downloading official Docker installation script from https://get.docker.com..."
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+elif command -v wget >/dev/null 2>&1; then
+    wget -qO /tmp/get-docker.sh https://get.docker.com
+else
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update && apt-get install -y curl ca-certificates
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y curl ca-certificates
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    fi
+fi
+echo "==> Running official Docker installer..."
+sh /tmp/get-docker.sh
+rm -f /tmp/get-docker.sh
+
+echo "==> Enabling and starting Docker daemon..."
+systemctl enable --now docker || service docker start || true
+
+if [ %[1]s != "root" ]; then
+    echo "==> Adding %[1]s to docker group..."
+    usermod -aG docker %[1]s || true
+fi
+if [ -S /var/run/docker.sock ]; then
+    chmod 666 /var/run/docker.sock || true
+fi
+
+echo "==> Verifying Docker installation..."
+docker --version
+docker compose version || docker-compose --version || true
+echo "==> Docker installation complete!"
+`, shellQuote(targetUser))
+	}
+
+	res, runErr := s.runElevated(installCtx, server, conn, script, req.SudoPassword, req.SaveSudo)
+	if runErr != nil {
+		var fErr *Error
+		if errors.As(runErr, &fErr) {
+			return runErr
+		}
+		return Internal(runErr)
+	}
+
+	AuditResource(r.Context(), "servers", server.ID)
+	AuditMeta(r.Context(), "action", "install_docker")
+	AuditMeta(r.Context(), "success", res.Ok())
+
+	var newCaps *sshx.Capabilities
+	if res.Ok() {
+		caps, probeErr := s.Servers.Probe(r.Context(), server)
+		if probeErr != nil {
+			s.Log.Warn("re-probing server after docker install failed", "server", server.ID, "error", probeErr)
+		} else {
+			newCaps = caps
+		}
+	}
+
+	return JSON(w, s.Log, http.StatusOK, installDockerResponse{
+		Stdout:       res.Stdout,
+		Stderr:       res.Stderr,
+		ExitCode:     res.ExitCode,
+		Success:      res.Ok(),
+		Capabilities: newCaps,
 	})
 }
 

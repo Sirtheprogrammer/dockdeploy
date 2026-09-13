@@ -597,3 +597,153 @@ export function useAutoDetectAllServers() {
     },
   })
 }
+
+// --- Docker Installation & Setup ----------------------------------------
+
+export interface InstallDockerInput {
+  method?: 'script' | 'repo'
+  sudo_password?: string
+  save_sudo?: boolean
+}
+
+export interface InstallDockerResult {
+  stdout: string
+  stderr: string
+  exit_code: number
+  success: boolean
+  capabilities?: Capabilities | null
+}
+
+export function useInstallDocker(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<InstallDockerResult, ApiError, InstallDockerInput>({
+    mutationFn: (body) => api.post<InstallDockerResult>(`/servers/${serverID}/install-docker`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: serverKey(serverID) })
+      void queryClient.invalidateQueries({ queryKey: ['containers', serverID] })
+    },
+  })
+}
+
+// --- Database Backups & Recovery ----------------------------------------
+
+export type DatabaseEngine = 'postgres' | 'mysql' | 'mongo' | 'redis' | 'sqlite'
+export type DatabaseExecutionMode = 'container' | 'host'
+
+export interface DatabaseBackupFile {
+  filename: string
+  path: string
+  size_bytes: number
+  engine: DatabaseEngine
+  database_name: string
+  created_at: string
+}
+
+export interface DiscoveredDatabaseContainer {
+  id: string
+  name: string
+  image: string
+  engine: DatabaseEngine
+  status: string
+}
+
+export interface ListDatabaseBackupsResult {
+  backup_dir: string
+  backups: DatabaseBackupFile[]
+  containers: DiscoveredDatabaseContainer[]
+}
+
+export interface CreateDatabaseBackupInput {
+  engine: DatabaseEngine
+  mode?: DatabaseExecutionMode
+  container_name?: string
+  database_name?: string
+  username?: string
+  password?: string
+  auth_database?: string
+  sqlite_path?: string
+  backup_dir?: string
+  sudo_password?: string
+  save_sudo?: boolean
+}
+
+export interface CreateDatabaseBackupResult {
+  success: boolean
+  backup_file?: DatabaseBackupFile
+  stdout: string
+  stderr: string
+  exit_code: number
+  duration_ms: number
+}
+
+export interface RestoreDatabaseBackupInput {
+  engine: DatabaseEngine
+  mode?: DatabaseExecutionMode
+  container_name?: string
+  database_name?: string
+  username?: string
+  password?: string
+  auth_database?: string
+  sqlite_path?: string
+  backup_path: string
+  drop_existing?: boolean
+  sudo_password?: string
+  save_sudo?: boolean
+}
+
+export interface RestoreDatabaseBackupResult {
+  success: boolean
+  stdout: string
+  stderr: string
+  exit_code: number
+  duration_ms: number
+}
+
+export function useDatabaseBackups(serverID: string, backupDir?: string) {
+  return useQuery<ListDatabaseBackupsResult, ApiError>({
+    queryKey: ['servers', serverID, 'database-backups', backupDir],
+    queryFn: () =>
+      api.get<ListDatabaseBackupsResult>(`/servers/${serverID}/database-backups`, {
+        query: backupDir ? { backup_dir: backupDir } : undefined,
+      }),
+  })
+}
+
+export function useCreateDatabaseBackup(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<CreateDatabaseBackupResult, ApiError, CreateDatabaseBackupInput>({
+    mutationFn: (body) => api.post<CreateDatabaseBackupResult>(`/servers/${serverID}/database-backups`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'database-backups'] })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useRestoreDatabaseBackup(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<RestoreDatabaseBackupResult, ApiError, RestoreDatabaseBackupInput>({
+    mutationFn: (body) =>
+      api.post<RestoreDatabaseBackupResult>(`/servers/${serverID}/database-backups/restore`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'database-backups'] })
+      void queryClient.invalidateQueries({ queryKey: ['containers', serverID] })
+    },
+  })
+}
+
+export function useDeleteDatabaseBackup(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ deleted: string; success: boolean }, ApiError, { path: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) =>
+      api.delete<{ deleted: string; success: boolean }>(`/servers/${serverID}/database-backups`, {
+        body,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'database-backups'] })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+

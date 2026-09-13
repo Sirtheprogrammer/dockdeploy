@@ -158,6 +158,12 @@ func (s *Server) Routes() (http.Handler, error) {
 
 			sv.guarded(http.MethodPost, "/{serverID}/sudo-password", auth.PermServerWrite, s.handleSetServerSudoPassword)
 			sv.guarded(http.MethodPost, "/{serverID}/exec-root", auth.PermServerWrite, s.handleExecRoot)
+			sv.guarded(http.MethodPost, "/{serverID}/install-docker", auth.PermServerWrite, s.handleInstallDocker)
+
+			sv.guarded(http.MethodGet, "/{serverID}/database-backups", auth.PermServerRead, s.handleListDatabaseBackups)
+			sv.guarded(http.MethodPost, "/{serverID}/database-backups", auth.PermServerWrite, s.handleCreateDatabaseBackup)
+			sv.guarded(http.MethodPost, "/{serverID}/database-backups/restore", auth.PermServerWrite, s.handleRestoreDatabaseBackup)
+			sv.guarded(http.MethodDelete, "/{serverID}/database-backups", auth.PermServerWrite, s.handleDeleteDatabaseBackup)
 		})
 
 		api.group("/deployments", func(d routes) {

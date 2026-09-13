@@ -23,6 +23,8 @@ import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CapabilityList } from '@/components/servers/CapabilityList'
 import { AutoDetectDialog } from '@/components/servers/AutoDetectDialog'
+import { InstallDockerDialog } from '@/components/servers/InstallDockerDialog'
+import { ServerDatabaseBackupsTab } from '@/components/servers/ServerDatabaseBackupsTab'
 import { LogViewer } from '@/components/servers/LogViewer'
 import { ServerFileBrowser } from '@/components/servers/ServerFileBrowser'
 import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
@@ -72,6 +74,7 @@ export function ServerDetail() {
   const [filesPath, setFilesPath] = useState('~')
   const [sudoDialogOpen, setSudoDialogOpen] = useState(false)
   const [execRootOpen, setExecRootOpen] = useState(false)
+  const [installDockerOpen, setInstallDockerOpen] = useState(false)
 
   const server = useServer(serverID)
   const info = useDockerInfo(serverID)
@@ -112,6 +115,17 @@ export function ServerDetail() {
         description={`${server.data.username}@${server.data.host}${server.data.port !== 22 ? `:${server.data.port}` : ''}`}
         actions={
           <>
+            {canWrite && !caps?.docker_socket_ok ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setInstallDockerOpen(true)}
+                className="border-blue-500/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20"
+              >
+                <Download className="size-3.5 mr-1" aria-hidden />
+                Install Docker
+              </Button>
+            ) : null}
             {canTerminal ? (
               <Button variant="outline" size="sm" onClick={() => setTerminalOpen(true)}>
                 <Terminal className="size-3.5" aria-hidden />
@@ -188,11 +202,31 @@ export function ServerDetail() {
           </Alert>
         ) : null}
 
+        {canWrite && !caps?.docker_socket_ok ? (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-lg border border-blue-500/30 bg-blue-500/10 text-xs">
+            <div className="text-blue-200">
+              <div className="font-semibold text-sm">Docker Engine is not running on this server</div>
+              <div className="text-blue-300/80 mt-0.5">
+                Install Docker Engine and Compose using the official Docker installer to begin deploying containers.
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setInstallDockerOpen(true)}
+              className="shrink-0 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium"
+            >
+              <Download className="mr-1.5 size-3.5" />
+              Install Docker
+            </Button>
+          </div>
+        ) : null}
+
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
             <TabsTrigger value="containers">Containers</TabsTrigger>
             <TabsTrigger value="metrics">Metrics & Health</TabsTrigger>
             <TabsTrigger value="files">Files & Volumes</TabsTrigger>
+            <TabsTrigger value="backups">Databases & Backups</TabsTrigger>
             <TabsTrigger value="images">Images</TabsTrigger>
             <TabsTrigger value="volumes">Volumes</TabsTrigger>
             <TabsTrigger value="networks">Networks</TabsTrigger>
@@ -224,6 +258,11 @@ export function ServerDetail() {
               />
             </ErrorBoundary>
           </TabsContent>
+          <TabsContent value="backups" className="pt-4">
+            <ErrorBoundary fallbackTitle="Could not load database backups">
+              <ServerDatabaseBackupsTab server={server.data} canWrite={canWrite} />
+            </ErrorBoundary>
+          </TabsContent>
           <TabsContent value="images" className="pt-4">
             <ImagesTab serverID={serverID} active={tab === 'images'} />
           </TabsContent>
@@ -249,7 +288,7 @@ export function ServerDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <CapabilityList capabilities={caps} />
+                <CapabilityList capabilities={caps} onInstallDocker={() => setInstallDockerOpen(true)} />
                 <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[10rem_1fr]">
                   <dt className="text-muted-foreground">Host key</dt>
                   <dd className="font-mono text-xs break-all">{server.data.host_key_fingerprint}</dd>
@@ -327,6 +366,14 @@ export function ServerDetail() {
             server={server.data}
             open={execRootOpen}
             onOpenChange={setExecRootOpen}
+          />
+          <InstallDockerDialog
+            server={server.data}
+            open={installDockerOpen}
+            onOpenChange={setInstallDockerOpen}
+            onSuccess={() => {
+              void probe.mutate()
+            }}
           />
         </>
       ) : null}

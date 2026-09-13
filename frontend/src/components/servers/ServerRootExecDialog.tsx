@@ -35,6 +35,15 @@ interface ServerRootExecDialogProps {
 }
 
 const PRESET_COMMANDS = [
+  {
+    label: 'Install Docker (Official Convenience Script)',
+    cmd: 'curl -fsSL https://get.docker.com | sh && systemctl enable --now docker && usermod -aG docker $USER || true',
+  },
+  {
+    label: 'Install Docker (Debian/Ubuntu Official Repo)',
+    cmd: 'apt-get update && apt-get install -y ca-certificates curl gnupg && install -m 0755 -d /etc/apt/keyrings && curl -fsSL https://download.docker.com/linux/$(. /etc/os-release && echo "$ID")/gpg -o /etc/apt/keyrings/docker.asc && chmod a+r /etc/apt/keyrings/docker.asc && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$(. /etc/os-release && echo "$ID") $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null && apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin && systemctl enable --now docker',
+  },
+  { label: 'Start & Enable Docker Daemon', cmd: 'systemctl enable --now docker && docker --version' },
   { label: 'Verify Sudo', cmd: 'id && whoami' },
   { label: 'Check Nginx', cmd: 'nginx -t && systemctl status nginx --no-pager' },
   { label: 'Reload Nginx', cmd: 'systemctl reload nginx || service nginx reload' },
