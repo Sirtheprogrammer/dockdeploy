@@ -6,13 +6,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { serverTerminalWebSocketURL, type Server } from '@/lib/servers'
+import { cn } from '@/lib/utils'
 
 interface ServerTerminalProps {
   server: Server
+  isFullscreen?: boolean
+  onToggleFullscreen?: () => void
   onClose?: () => void
 }
 
-export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
+export function ServerTerminal({
+  server,
+  isFullscreen: controlledFullscreen,
+  onToggleFullscreen,
+  onClose,
+}: ServerTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -20,7 +28,17 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
 
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [internalFullscreen, setInternalFullscreen] = useState(false)
+
+  const isFullscreen = controlledFullscreen !== undefined ? controlledFullscreen : internalFullscreen
+
+  const toggleFullscreen = () => {
+    if (onToggleFullscreen) {
+      onToggleFullscreen()
+    } else {
+      setInternalFullscreen((prev) => !prev)
+    }
+  }
 
   const connect = useCallback(() => {
     if (!containerRef.current) return
@@ -171,15 +189,36 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
     }
   }, [connect])
 
+  // Re-fit and update terminal dimensions when toggling fullscreen
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (fitAddonRef.current && termRef.current) {
+        try {
+          fitAddonRef.current.fit()
+          const { cols, rows } = termRef.current
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'resize', cols, rows }))
+          }
+        } catch {
+          // ignore layout exceptions
+        }
+      }
+    }, 60)
+    return () => clearTimeout(timer)
+  }, [isFullscreen])
+
   const clearTerminal = () => {
     termRef.current?.clear()
   }
 
   return (
     <div
-      className={`flex flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 shadow-2xl transition-all ${
-        isFullscreen ? 'fixed inset-4 z-50 rounded-xl' : 'h-[32rem] w-full'
-      }`}
+      className={cn(
+        'flex flex-col overflow-hidden bg-zinc-950 transition-all duration-150',
+        isFullscreen
+          ? 'fixed inset-0 z-50 h-screen w-screen rounded-none border-0'
+          : 'h-[32rem] w-full rounded-lg border border-zinc-800 shadow-2xl'
+      )}
     >
       {/* Terminal Title Bar */}
       <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-4 py-2 select-none">
@@ -239,7 +278,7 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
             variant="ghost"
             size="sm"
             className="h-7 px-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-            onClick={() => setIsFullscreen(!isFullscreen)}
+            onClick={toggleFullscreen}
             title={isFullscreen ? 'Exit full screen' : 'Full screen'}
           >
             {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}

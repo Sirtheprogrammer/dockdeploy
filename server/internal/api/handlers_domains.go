@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
 
@@ -61,6 +62,16 @@ func (s *Server) handleListDomains(w http.ResponseWriter, r *http.Request) error
 		if !accessibleServers[d.ServerID] {
 			continue
 		}
+		if d.ConfigRendered == "" {
+			if cfg, err := nginxx.Render(nginxx.Config{
+				Hostname:     d.Hostname,
+				UpstreamPort: d.UpstreamPort,
+				WebSocket:    d.WebSocket,
+				HasSSL:       d.SSLMode == store.DomainSSLLetsEncrypt,
+			}); err == nil {
+				d.ConfigRendered = cfg
+			}
+		}
 		var depName string
 		if d.DeploymentID != nil {
 			depName = deploymentNames[*d.DeploymentID]
@@ -97,6 +108,17 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) error {
 	server, err := s.Store.ServerByID(r.Context(), domain.ServerID)
 	if err != nil {
 		return Internal(err)
+	}
+
+	if domain.ConfigRendered == "" {
+		if cfg, err := nginxx.Render(nginxx.Config{
+			Hostname:     domain.Hostname,
+			UpstreamPort: domain.UpstreamPort,
+			WebSocket:    domain.WebSocket,
+			HasSSL:       domain.SSLMode == store.DomainSSLLetsEncrypt,
+		}); err == nil {
+			domain.ConfigRendered = cfg
+		}
 	}
 
 	var depName string
@@ -198,16 +220,25 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 		depID = &deployment.ID
 	}
 
+	// Pre-render virtual host configuration so it is immediately available and never blank
+	rendered, _ := nginxx.Render(nginxx.Config{
+		Hostname:     hostname,
+		UpstreamPort: req.UpstreamPort,
+		WebSocket:    req.WebSocket,
+		HasSSL:       sslMode == store.DomainSSLLetsEncrypt,
+	})
+
 	created, err := s.Store.CreateDomain(r.Context(), store.NewDomain{
-		DeploymentID:  depID,
-		ServerID:      server.ID,
-		Hostname:      hostname,
-		UpstreamPort:  req.UpstreamPort,
-		SSLMode:       sslMode,
-		WebSocket:     req.WebSocket,
-		Status:        store.DomainStatusPending,
-		StatusMessage: "Deploying virtual host...",
-		CreatedBy:     actor.User.ID,
+		DeploymentID:   depID,
+		ServerID:       server.ID,
+		Hostname:       hostname,
+		UpstreamPort:   req.UpstreamPort,
+		SSLMode:        sslMode,
+		WebSocket:      req.WebSocket,
+		ConfigRendered: rendered,
+		Status:         store.DomainStatusPending,
+		StatusMessage:  "Deploying virtual host...",
+		CreatedBy:      actor.User.ID,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -226,6 +257,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 			// First deploy HTTP vhost, then attempt certificate issuance
 			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
+					ConfigRendered: &rendered,
 					Status:        store.DomainStatusError,
 					StatusMessage: deployErr.Error(),
 				})
@@ -238,6 +270,7 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 		} else {
 			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
+					ConfigRendered: &rendered,
 					Status:        store.DomainStatusError,
 					StatusMessage: deployErr.Error(),
 				})

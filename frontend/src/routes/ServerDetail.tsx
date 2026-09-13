@@ -53,7 +53,7 @@ import {
   useVolumes,
   type Container,
 } from '@/lib/servers'
-import { formatBytes, formatRelative } from '@/lib/utils'
+import { cn, formatBytes, formatRelative } from '@/lib/utils'
 
 export function ServerDetail() {
   const { serverID = '' } = useParams()
@@ -63,6 +63,7 @@ export function ServerDetail() {
   const [tab, setTab] = useState('containers')
   const [logsFor, setLogsFor] = useState<Container | null>(null)
   const [terminalOpen, setTerminalOpen] = useState(false)
+  const [terminalFullscreen, setTerminalFullscreen] = useState(false)
   const [filesPath, setFilesPath] = useState('~')
 
   const server = useServer(serverID)
@@ -260,14 +261,35 @@ export function ServerDetail() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={terminalOpen} onOpenChange={setTerminalOpen}>
-        <DialogContent className="max-w-5xl p-4 bg-zinc-950 border-zinc-800 text-zinc-100">
+      <Dialog
+        open={terminalOpen}
+        onOpenChange={(open) => {
+          setTerminalOpen(open)
+          if (!open) setTerminalFullscreen(false)
+        }}
+      >
+        <DialogContent
+          className={cn(
+            'bg-zinc-950 border-zinc-800 text-zinc-100 transition-all duration-150 [&>button:last-child]:hidden',
+            terminalFullscreen
+              ? '!fixed !inset-0 !top-0 !left-0 !translate-x-0 !translate-y-0 !w-screen !h-screen !max-w-none !max-h-none !rounded-none !border-0 !p-0 z-50 flex flex-col'
+              : 'max-w-5xl p-4'
+          )}
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>Interactive Server Terminal</DialogTitle>
             <DialogDescription>Interactive SSH shell on {server.data.name}</DialogDescription>
           </DialogHeader>
           {terminalOpen ? (
-            <ServerTerminal server={server.data} onClose={() => setTerminalOpen(false)} />
+            <ServerTerminal
+              server={server.data}
+              isFullscreen={terminalFullscreen}
+              onToggleFullscreen={() => setTerminalFullscreen((prev) => !prev)}
+              onClose={() => {
+                setTerminalFullscreen(false)
+                setTerminalOpen(false)
+              }}
+            />
           ) : null}
         </DialogContent>
       </Dialog>

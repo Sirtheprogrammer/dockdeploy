@@ -56,6 +56,23 @@ func (m *Manager) Deploy(ctx context.Context, server *store.Server, domain *stor
 		return "", fmt.Errorf("read server credentials: %w", err)
 	}
 
+	if caps.NginxLayout == sshx.NginxNone {
+		// Live probe over SSH in case nginx was installed after initial registration
+		if d, err := conn.Run(ctx, `test -d /etc/nginx/sites-available && echo yes`); err == nil && d.Output() == "yes" {
+			caps.NginxLayout = sshx.NginxDebian
+		} else if d, err := conn.Run(ctx, `test -d /etc/nginx/conf.d && echo yes`); err == nil && d.Output() == "yes" {
+			caps.NginxLayout = sshx.NginxConfD
+		} else if d, err := conn.Run(ctx, `which nginx 2>/dev/null && echo yes`); err == nil && d.Output() == "yes" {
+			_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, "mkdir -p /etc/nginx/conf.d")
+			caps.NginxLayout = sshx.NginxConfD
+		} else {
+			return "", errors.New("nginx is not installed or its directory layout is unrecognized on this server")
+		}
+	}
+
+	// Ensure webroot directory exists for ACME challenge
+	_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, "mkdir -p /var/www/certbot && chmod 755 /var/www/certbot")
+
 	// Check whether SSL certificate files exist on the server
 	hasSSL := false
 	if domain.SSLMode == store.DomainSSLLetsEncrypt {
@@ -80,38 +97,40 @@ func (m *Manager) Deploy(ctx context.Context, server *store.Server, domain *stor
 	// Step 1: Upload to temp file
 	tempPath := fmt.Sprintf("/tmp/dockdeploy-%s.conf", domain.Hostname)
 	if err := conn.WriteFile(ctx, tempPath, []byte(rendered), 0o644); err != nil {
-		return "", fmt.Errorf("upload temp config: %w", err)
+		// Fallback write via sudo tee
+		session, sErr := conn.Client().NewSession()
+		if sErr != nil {
+			return "", fmt.Errorf("upload temp config: %w", err)
+		}
+		session.Stdin = strings.NewReader(rendered)
+		teeCmd := fmt.Sprintf("sudo tee %s >/dev/null", shellQuote(tempPath))
+		if tErr := session.Run(teeCmd); tErr != nil {
+			session.Close()
+			return "", fmt.Errorf("upload temp config via sudo tee: %w", tErr)
+		}
+		session.Close()
 	}
 	defer func() {
-		_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, fmt.Sprintf("rm -f %s /tmp/dockdeploy-test-%s.conf", tempPath, domain.Hostname))
+		_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, fmt.Sprintf("rm -f %s", shellQuote(tempPath)))
 	}()
-
-	// Step 2: Validate syntax in isolation with a minimal wrapper config
-	testWrapper := fmt.Sprintf("events {}\nhttp {\n    include %s;\n}\n", tempPath)
-	testWrapperPath := fmt.Sprintf("/tmp/dockdeploy-test-%s.conf", domain.Hostname)
-	if err := conn.WriteFile(ctx, testWrapperPath, []byte(testWrapper), 0o644); err == nil {
-		syntaxCheck, err := m.runSudo(ctx, conn, caps, cred.SudoPassword, fmt.Sprintf("nginx -t -c %s 2>&1", testWrapperPath))
-		if err != nil || !syntaxCheck.Ok() {
-			out := syntaxCheck.Stdout + syntaxCheck.Stderr
-			return "", fmt.Errorf("nginx syntax error in rendered virtual host: %s", strings.TrimSpace(out))
-		}
-	}
 
 	// Determine target path
 	var availablePath, enabledPath string
 	if caps.NginxLayout == sshx.NginxDebian {
 		availablePath = fmt.Sprintf("/etc/nginx/sites-available/%s.conf", domain.Hostname)
 		enabledPath = fmt.Sprintf("/etc/nginx/sites-enabled/%s.conf", domain.Hostname)
+		_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, "mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled")
 	} else {
 		availablePath = fmt.Sprintf("/etc/nginx/conf.d/%s.conf", domain.Hostname)
+		_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword, "mkdir -p /etc/nginx/conf.d")
 	}
 
-	// Step 3: Back up existing file if present
+	// Step 2: Back up existing file if present
 	backupPath := availablePath + ".dockdeploy.bak"
 	_, _ = m.runSudo(ctx, conn, caps, cred.SudoPassword,
 		fmt.Sprintf("if [ -f %s ]; then cp -f %s %s; fi", shellQuote(availablePath), shellQuote(availablePath), shellQuote(backupPath)))
 
-	// Move new config into place
+	// Step 3: Move new config into place
 	installCmd := fmt.Sprintf("cp -f %s %s && chmod 644 %s",
 		shellQuote(tempPath), shellQuote(availablePath), shellQuote(availablePath))
 	if enabledPath != "" {
