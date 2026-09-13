@@ -934,11 +934,49 @@ func (s *Service) discoverDeployments(
 		}
 		allSlugs[finalSlug] = true
 
+		if composeContent == "" {
+			var sb strings.Builder
+			sb.WriteString("services:\n")
+			for _, c := range cList {
+				cName := strings.TrimPrefix(c.Name, "/")
+				svcName := slugify(cName)
+				projSlug := slugify(projName)
+				if strings.HasPrefix(svcName, projSlug+"-") {
+					svcName = strings.TrimPrefix(svcName, projSlug+"-")
+				}
+				if svcName == "" {
+					svcName = "app"
+				}
+				img := c.Image
+				if img == "" {
+					img = "unknown"
+				}
+				sb.WriteString(fmt.Sprintf("  %s:\n    image: %s\n    restart: unless-stopped\n", svcName, img))
+				if len(c.Ports) > 0 {
+					sb.WriteString("    ports:\n")
+					for _, p := range c.Ports {
+						if p.HostPort > 0 {
+							sb.WriteString(fmt.Sprintf("      - \"%d:%d\"\n", p.HostPort, p.Container))
+						}
+					}
+				}
+			}
+			composeContent = sb.String()
+		}
+
+		if workdir == "" {
+			workdir = ".dockdeploy/apps/" + finalSlug
+		}
+		if composePath == "" {
+			composePath = "docker-compose.yml"
+		}
+
 		created, err := s.store.CreateDeployment(ctx, s.sealer, store.NewDeployment{
 			ServerID:       server.ID,
 			Name:           projName,
 			Slug:           finalSlug,
 			SourceType:     store.SourceRawCompose,
+			BuildStrategy:  store.BuildRemote,
 			ComposeContent: composeContent,
 			ComposePath:    composePath,
 			Workdir:        workdir,
@@ -1024,12 +1062,22 @@ func (s *Service) discoverDeployments(
 		}
 		allSlugs[finalSlug] = true
 
+		imgRef := c.Image
+		if imgRef == "" {
+			imgRef = c.ImageID
+		}
+		if imgRef == "" {
+			imgRef = "unknown"
+		}
+
 		created, err := s.store.CreateDeployment(ctx, s.sealer, store.NewDeployment{
 			ServerID:      server.ID,
 			Name:          name,
 			Slug:          finalSlug,
 			SourceType:    store.SourceImage,
-			ImageRef:      c.Image,
+			BuildStrategy: store.BuildRemote,
+			ImageRef:      imgRef,
+			Workdir:       ".dockdeploy/apps/" + finalSlug,
 			HostPort:      hostPort,
 			ContainerPort: containerPort,
 			WebhookSecret: randomSecret(),
@@ -1113,8 +1161,12 @@ func slugify(name string) string {
 	if len(slug) > 50 {
 		slug = strings.Trim(slug[:50], "-")
 	}
-	if slug == "" {
-		slug = "app"
+	if len(slug) < 2 {
+		if slug == "" {
+			slug = "app"
+		} else {
+			slug = slug + "-app"
+		}
 	}
 	return slug
 }

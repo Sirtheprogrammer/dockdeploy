@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -175,11 +176,18 @@ func TestSlugify(t *testing.T) {
 		{"app_with_underscores-and-DASHES", "app-with-underscores-and-dashes"},
 		{"---weird---name---", "weird-name"},
 		{"", "app"},
+		{"a", "a-app"},
+		{"db", "db"},
+		{"deploy", "deploy"},
 	}
+	slugRegex := regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,48}[a-z0-9]$`)
 	for _, tt := range tests {
 		got := slugify(tt.in)
 		if got != tt.want {
 			t.Errorf("slugify(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+		if !slugRegex.MatchString(got) {
+			t.Errorf("slugify(%q) = %q does not match slug regex", tt.in, got)
 		}
 	}
 }
