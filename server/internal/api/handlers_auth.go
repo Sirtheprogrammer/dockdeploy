@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -136,9 +137,78 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) error {
 		return Forbidden("This account has been suspended.")
 	}
 
+	if user.TOTPEnabled {
+		tempToken := s.Hasher.Sign2FAToken(user.ID, time.Now().Add(5*time.Minute))
+		return JSON(w, s.Log, http.StatusOK, map[string]any{
+			"requires_2fa": true,
+			"temp_token":   tempToken,
+		})
+	}
+
 	if err := s.Store.TouchUserLogin(r.Context(), user.ID); err != nil {
 		s.Log.Warn("record login time", "error", err)
 	}
+	return s.startSession(w, r, user, http.StatusOK)
+}
+
+type login2FARequest struct {
+	TempToken string `json:"temp_token"`
+	Code      string `json:"code"`
+}
+
+func (s *Server) handleLogin2FA(w http.ResponseWriter, r *http.Request) error {
+	var req login2FARequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	req.TempToken = strings.TrimSpace(req.TempToken)
+	req.Code = strings.TrimSpace(req.Code)
+	if req.TempToken == "" || req.Code == "" {
+		return Invalid(fields{"code": "Please enter your authentication code."})
+	}
+
+	userID, err := s.Hasher.Verify2FAToken(req.TempToken)
+	if err != nil {
+		return Unauthorized("Your 2FA login session has expired or is invalid. Please log in again.")
+	}
+
+	user, err := s.Store.UserByID(r.Context(), userID)
+	if err != nil {
+		return Unauthorized("User not found.")
+	}
+	if !user.IsActive() {
+		return Forbidden("This account has been suspended.")
+	}
+	if !user.TOTPEnabled {
+		return Unauthorized("2FA is not enabled for this account.")
+	}
+
+	verified := false
+	if len(req.Code) == auth.TOTPDigits {
+		secret, err := s.Store.GetUserTOTPSecret(r.Context(), s.Sealer, user)
+		if err == nil && secret != "" {
+			if auth.VerifyTOTP(secret, req.Code, time.Now()) {
+				verified = true
+			}
+		}
+	}
+
+	if !verified {
+		consumed, err := s.Store.ConsumeRecoveryCode(r.Context(), s.Sealer, user, req.Code)
+		if err == nil && consumed {
+			verified = true
+			s.Log.Info("user authenticated with 2fa recovery code", "user", user.ID)
+		}
+	}
+
+	if !verified {
+		return Unauthorized("Invalid authentication code or recovery code.")
+	}
+
+	if err := s.Store.TouchUserLogin(r.Context(), user.ID); err != nil {
+		s.Log.Warn("record login time", "error", err)
+	}
+
 	return s.startSession(w, r, user, http.StatusOK)
 }
 
@@ -244,6 +314,177 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) er
 	AuditResource(r.Context(), "users", id.User.ID)
 	AuditMeta(r.Context(), "event", "password_changed")
 	return NoContent(w)
+}
+
+// --- Two-Factor Authentication (2FA / TOTP) ----------------------------
+
+func (s *Server) handle2FAStatus(w http.ResponseWriter, r *http.Request) error {
+	id := MustIdentity(r.Context())
+	user, err := s.Store.UserByID(r.Context(), id.User.ID)
+	if err != nil {
+		return Internal(err)
+	}
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"enabled": user.TOTPEnabled,
+	})
+}
+
+func (s *Server) handle2FASetup(w http.ResponseWriter, r *http.Request) error {
+	id := MustIdentity(r.Context())
+	secret, err := auth.GenerateTOTPSecret()
+	if err != nil {
+		return Internal(err)
+	}
+
+	if err := s.Store.SetUserTOTPSecret(r.Context(), s.Sealer, id.User.ID, secret); err != nil {
+		return Internal(err)
+	}
+
+	otpauthURL := auth.GenerateTOTPURL("dockdeploy", id.User.Email, secret)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]string{
+		"secret":      secret,
+		"otpauth_url": otpauthURL,
+	})
+}
+
+type enable2FARequest struct {
+	Code string `json:"code"`
+}
+
+func (s *Server) handle2FAEnable(w http.ResponseWriter, r *http.Request) error {
+	var req enable2FARequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	if len(req.Code) != auth.TOTPDigits {
+		return Invalid(fields{"code": "Enter a valid 6-digit code from your authenticator app."})
+	}
+
+	id := MustIdentity(r.Context())
+	user, err := s.Store.UserByID(r.Context(), id.User.ID)
+	if err != nil {
+		return Internal(err)
+	}
+
+	secret, err := s.Store.GetUserTOTPSecret(r.Context(), s.Sealer, user)
+	if err != nil || secret == "" {
+		return BadRequest("2FA setup has not been initiated. Please start setup first.")
+	}
+
+	if !auth.VerifyTOTP(secret, req.Code, time.Now()) {
+		return Invalid(fields{"code": "The code does not match. Check the time on your device and try again."})
+	}
+
+	recoveryCodes, err := auth.GenerateRecoveryCodes(10)
+	if err != nil {
+		return Internal(err)
+	}
+
+	if err := s.Store.EnableUserTOTP(r.Context(), s.Sealer, user.ID, recoveryCodes); err != nil {
+		return Internal(err)
+	}
+
+	AuditResource(r.Context(), "users", user.ID)
+	AuditMeta(r.Context(), "event", "2fa_enabled")
+	s.Log.Info("2fa enabled", "user", user.ID)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"success":        true,
+		"recovery_codes": recoveryCodes,
+	})
+}
+
+type disable2FARequest struct {
+	Password string `json:"password"`
+	Code     string `json:"code"`
+}
+
+func (s *Server) handle2FADisable(w http.ResponseWriter, r *http.Request) error {
+	var req disable2FARequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	id := MustIdentity(r.Context())
+	user, err := s.Store.UserByID(r.Context(), id.User.ID)
+	if err != nil {
+		return Internal(err)
+	}
+
+	if !user.TOTPEnabled {
+		return BadRequest("2FA is not enabled on this account.")
+	}
+
+	verified := false
+	if req.Password != "" {
+		if err := auth.VerifyPassword(req.Password, user.PasswordHash); err == nil {
+			verified = true
+		}
+	}
+	if !verified && req.Code != "" {
+		secret, err := s.Store.GetUserTOTPSecret(r.Context(), s.Sealer, user)
+		if err == nil && secret != "" && auth.VerifyTOTP(secret, req.Code, time.Now()) {
+			verified = true
+		}
+	}
+
+	if !verified {
+		return Invalid(fields{"password": "Valid current password or authenticator code is required to disable 2FA."})
+	}
+
+	if err := s.Store.DisableUserTOTP(r.Context(), user.ID); err != nil {
+		return Internal(err)
+	}
+
+	AuditResource(r.Context(), "users", user.ID)
+	AuditMeta(r.Context(), "event", "2fa_disabled")
+	s.Log.Info("2fa disabled", "user", user.ID)
+
+	return NoContent(w)
+}
+
+type regenerateRecoveryCodesRequest struct {
+	Password string `json:"password"`
+}
+
+func (s *Server) handle2FARegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) error {
+	var req regenerateRecoveryCodesRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	id := MustIdentity(r.Context())
+	user, err := s.Store.UserByID(r.Context(), id.User.ID)
+	if err != nil {
+		return Internal(err)
+	}
+
+	if !user.TOTPEnabled {
+		return BadRequest("2FA is not enabled on this account.")
+	}
+
+	if err := auth.VerifyPassword(req.Password, user.PasswordHash); err != nil {
+		return Invalid(fields{"password": "That is not your current password."})
+	}
+
+	recoveryCodes, err := auth.GenerateRecoveryCodes(10)
+	if err != nil {
+		return Internal(err)
+	}
+
+	if err := s.Store.EnableUserTOTP(r.Context(), s.Sealer, user.ID, recoveryCodes); err != nil {
+		return Internal(err)
+	}
+
+	AuditResource(r.Context(), "users", user.ID)
+	AuditMeta(r.Context(), "event", "2fa_recovery_codes_regenerated")
+	s.Log.Info("2fa recovery codes regenerated", "user", user.ID)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"recovery_codes": recoveryCodes,
+	})
 }
 
 type sessionResponse struct {

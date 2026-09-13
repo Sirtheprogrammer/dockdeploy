@@ -78,6 +78,7 @@ func (s *Server) Routes() (http.Handler, error) {
 			a.open(http.MethodGet, "/setup", s.handleSetupStatus)
 			a.open(http.MethodPost, "/setup", s.handleSetup)
 			a.open(http.MethodPost, "/login", s.handleLogin)
+			a.open(http.MethodPost, "/login/2fa", s.handleLogin2FA)
 			a.open(http.MethodGet, "/invitations/{token}", s.handleInvitationPreview)
 			a.open(http.MethodPost, "/invitations/{token}/accept", s.handleAcceptInvitation)
 
@@ -87,6 +88,12 @@ func (s *Server) Routes() (http.Handler, error) {
 			a.guarded(http.MethodPost, "/password", auth.PermSelf, s.handleChangePassword)
 			a.guarded(http.MethodGet, "/sessions", auth.PermSelf, s.handleListSessions)
 			a.guarded(http.MethodDelete, "/sessions/{sessionID}", auth.PermSelf, s.handleRevokeSession)
+
+			a.guarded(http.MethodGet, "/2fa/status", auth.PermSelf, s.handle2FAStatus)
+			a.guarded(http.MethodPost, "/2fa/setup", auth.PermSelf, s.handle2FASetup)
+			a.guarded(http.MethodPost, "/2fa/enable", auth.PermSelf, s.handle2FAEnable)
+			a.guarded(http.MethodPost, "/2fa/disable", auth.PermSelf, s.handle2FADisable)
+			a.guarded(http.MethodPost, "/2fa/recovery-codes", auth.PermSelf, s.handle2FARegenerateRecoveryCodes)
 		})
 
 		// Tokens are personal: every signed-in user manages their own.
@@ -167,7 +174,8 @@ func (s *Server) Routes() (http.Handler, error) {
 			d.guarded(http.MethodGet, "/{deploymentID}/runs/{runID}/logs", auth.PermDeploymentRead, s.handleRunLogs)
 			d.guarded(http.MethodPost, "/{deploymentID}/runs/{runID}/cancel", auth.PermDeploymentDeploy, s.handleCancelRun)
 
-			d.guarded(http.MethodGet, "/{deploymentID}/webhook", auth.PermDeploymentRead, s.handleGetDeploymentWebhook)
+			d.guarded(http.MethodGet, "/{deploymentID}/webhook", auth.PermDeploymentWrite, s.handleGetDeploymentWebhook)
+			d.guarded(http.MethodPost, "/{deploymentID}/webhook/rotate", auth.PermDeploymentWrite, s.handleRotateDeploymentWebhook)
 			d.open(http.MethodPost, "/{deploymentID}/webhook", s.handleTriggerWebhook)
 		})
 

@@ -127,6 +127,7 @@ func TestProductionRoutesAreFullyGuarded(t *testing.T) {
 		"GET /api/auth/setup":                       true,
 		"POST /api/auth/setup":                      true,
 		"POST /api/auth/login":                      true,
+		"POST /api/auth/login/2fa":                  true,
 		"GET /api/auth/invitations/{token}":         true,
 		"POST /api/auth/invitations/{token}/accept": true,
 		"POST /api/deployments/{deploymentID}/webhook": true,

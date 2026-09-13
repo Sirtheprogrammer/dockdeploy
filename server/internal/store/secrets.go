@@ -28,6 +28,8 @@ const (
 	KindRegistryToken = secrets.KindRegistryToken
 	KindDeploymentEnv = secrets.KindDeploymentEnv
 	KindWebhookSecret = secrets.KindWebhookSecret
+	KindTOTPSecret    = secrets.KindTOTPSecret
+	KindTOTPRecovery  = secrets.KindTOTPRecovery
 )
 
 // insertSecret seals a value and stores it, returning the new row id.

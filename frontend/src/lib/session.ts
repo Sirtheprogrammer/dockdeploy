@@ -36,8 +36,14 @@ export interface User {
   role: Role
   status: UserStatus
   last_login_at: string | null
+  totp_enabled: boolean
   created_at: string
   updated_at: string
+}
+
+export type LoginResponse = CurrentUser | {
+  requires_2fa: true
+  temp_token: string
 }
 
 export interface CurrentUser extends User {
@@ -99,8 +105,21 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
 
 export function useLogin() {
   const queryClient = useQueryClient()
-  return useMutation<CurrentUser, ApiError, { email: string; password: string }>({
-    mutationFn: (body) => api.post<CurrentUser>('/auth/login', body),
+  return useMutation<LoginResponse, ApiError, { email: string; password: string }>({
+    mutationFn: (body) => api.post<LoginResponse>('/auth/login', body),
+    onSuccess: (res) => {
+      if ('requires_2fa' in res && res.requires_2fa) {
+        return
+      }
+      queryClient.setQueryData(sessionKey, res)
+    },
+  })
+}
+
+export function useLogin2FA() {
+  const queryClient = useQueryClient()
+  return useMutation<CurrentUser, ApiError, { temp_token: string; code: string }>({
+    mutationFn: (body) => api.post<CurrentUser>('/auth/login/2fa', body),
     onSuccess: (user) => {
       queryClient.setQueryData(sessionKey, user)
     },

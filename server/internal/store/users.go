@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -18,15 +20,18 @@ const (
 )
 
 type User struct {
-	ID           string     `db:"id"           json:"id"`
-	Email        string     `db:"email"        json:"email"`
-	Name         string     `db:"name"         json:"name"`
-	PasswordHash string     `db:"password_hash" json:"-"`
-	Role         auth.Role  `db:"role"         json:"role"`
-	Status       UserStatus `db:"status"       json:"status"`
-	LastLoginAt  *time.Time `db:"last_login_at" json:"last_login_at"`
-	CreatedAt    time.Time  `db:"created_at"   json:"created_at"`
-	UpdatedAt    time.Time  `db:"updated_at"   json:"updated_at"`
+	ID                   string     `db:"id"                      json:"id"`
+	Email                string     `db:"email"                   json:"email"`
+	Name                 string     `db:"name"                    json:"name"`
+	PasswordHash         string     `db:"password_hash"           json:"-"`
+	Role                 auth.Role  `db:"role"                    json:"role"`
+	Status               UserStatus `db:"status"                  json:"status"`
+	LastLoginAt          *time.Time `db:"last_login_at"           json:"last_login_at"`
+	TOTPSecretID         *string    `db:"totp_secret_id"          json:"-"`
+	TOTPRecoverySecretID *string    `db:"totp_recovery_secret_id" json:"-"`
+	TOTPEnabled          bool       `db:"totp_enabled"            json:"totp_enabled"`
+	CreatedAt            time.Time  `db:"created_at"              json:"created_at"`
+	UpdatedAt            time.Time  `db:"updated_at"              json:"updated_at"`
 }
 
 func (u *User) IsActive() bool { return u.Status == UserActive }
@@ -37,7 +42,7 @@ func NormaliseEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-const userColumns = `id, email, name, password_hash, role, status, last_login_at, created_at, updated_at`
+const userColumns = `id, email, name, password_hash, role, status, last_login_at, totp_secret_id, totp_recovery_secret_id, totp_enabled, created_at, updated_at`
 
 // setupAdvisoryLock serialises first-admin creation across processes. The
 // constant is arbitrary but must stay stable.
@@ -244,3 +249,123 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (s *Store) SetUserTOTPSecret(ctx context.Context, sealer Sealer, userID, secretBase32 string) error {
+	if s.sqlite != nil {
+		return s.sqlite.SetUserTOTPSecret(ctx, sealer, userID, secretBase32)
+	}
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.TOTPSecretID != nil && *user.TOTPSecretID != "" {
+		return s.ReplaceSecret(ctx, sealer, *user.TOTPSecretID, secretBase32)
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		id, err := insertSecret(ctx, tx, sealer, KindTOTPSecret, secretBase32)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE users SET totp_secret_id = $1 WHERE id = $2`, id, userID)
+		return wrap("store: update user totp secret id", err)
+	})
+}
+
+func (s *Store) EnableUserTOTP(ctx context.Context, sealer Sealer, userID string, recoveryCodes []string) error {
+	if s.sqlite != nil {
+		return s.sqlite.EnableUserTOTP(ctx, sealer, userID, recoveryCodes)
+	}
+	payload, err := json.Marshal(recoveryCodes)
+	if err != nil {
+		return err
+	}
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.TOTPRecoverySecretID != nil && *user.TOTPRecoverySecretID != "" {
+		if err := s.ReplaceSecret(ctx, sealer, *user.TOTPRecoverySecretID, string(payload)); err != nil {
+			return err
+		}
+		_, err = s.pool.Exec(ctx, `UPDATE users SET totp_enabled = true WHERE id = $1`, userID)
+		return wrap("store: enable user totp", err)
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		id, err := insertSecret(ctx, tx, sealer, KindTOTPRecovery, string(payload))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE users SET totp_recovery_secret_id = $1, totp_enabled = true WHERE id = $2`, id, userID)
+		return wrap("store: enable user totp", err)
+	})
+}
+
+func (s *Store) DisableUserTOTP(ctx context.Context, userID string) error {
+	if s.sqlite != nil {
+		return s.sqlite.DisableUserTOTP(ctx, userID)
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE users SET totp_enabled = false, totp_secret_id = NULL, totp_recovery_secret_id = NULL WHERE id = $1`, userID)
+	return wrap("store: disable user totp", err)
+}
+
+func (s *Store) GetUserTOTPSecret(ctx context.Context, sealer Sealer, user *User) (string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.GetUserTOTPSecret(ctx, sealer, user)
+	}
+	if user.TOTPSecretID == nil {
+		return "", errors.New("user has no totp secret")
+	}
+	return s.openSecret(ctx, sealer, user.TOTPSecretID)
+}
+
+func (s *Store) GetUserRecoveryCodes(ctx context.Context, sealer Sealer, user *User) ([]string, error) {
+	if s.sqlite != nil {
+		return s.sqlite.GetUserRecoveryCodes(ctx, sealer, user)
+	}
+	if user.TOTPRecoverySecretID == nil {
+		return nil, nil
+	}
+	raw, err := s.openSecret(ctx, sealer, user.TOTPRecoverySecretID)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var codes []string
+	if err := json.Unmarshal([]byte(raw), &codes); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *Store) ConsumeRecoveryCode(ctx context.Context, sealer Sealer, user *User, code string) (bool, error) {
+	if s.sqlite != nil {
+		return s.sqlite.ConsumeRecoveryCode(ctx, sealer, user, code)
+	}
+	codes, err := s.GetUserRecoveryCodes(ctx, sealer, user)
+	if err != nil || len(codes) == 0 {
+		return false, err
+	}
+	target := auth.NormalizeRecoveryCode(code)
+	idx := -1
+	for i, c := range codes {
+		if auth.NormalizeRecoveryCode(c) == target {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false, nil
+	}
+	codes = append(codes[:idx], codes[idx+1:]...)
+	payload, err := json.Marshal(codes)
+	if err != nil {
+		return false, err
+	}
+	if err := s.ReplaceSecret(ctx, sealer, *user.TOTPRecoverySecretID, string(payload)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+

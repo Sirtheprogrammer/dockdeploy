@@ -209,3 +209,59 @@ export function useRevokeSession() {
     },
   })
 }
+
+// --- 2FA ----------------------------------------------------------------
+
+export interface TwoFactorSetupResponse {
+  secret: string
+  otpauth_url: string
+}
+
+export interface TwoFactorEnableResponse {
+  success: boolean
+  recovery_codes: string[]
+}
+
+export const twoFactorStatusKey = ['auth', '2fa', 'status'] as const
+
+export function use2FAStatus() {
+  return useQuery<{ enabled: boolean }, ApiError>({
+    queryKey: twoFactorStatusKey,
+    queryFn: ({ signal }) => api.get<{ enabled: boolean }>('/auth/2fa/status', { signal }),
+  })
+}
+
+export function useSetup2FA() {
+  return useMutation<TwoFactorSetupResponse, ApiError, void>({
+    mutationFn: () => api.post<TwoFactorSetupResponse>('/auth/2fa/setup'),
+  })
+}
+
+export function useEnable2FA() {
+  const queryClient = useQueryClient()
+  return useMutation<TwoFactorEnableResponse, ApiError, { code: string }>({
+    mutationFn: (body) => api.post<TwoFactorEnableResponse>('/auth/2fa/enable', body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: twoFactorStatusKey })
+      void queryClient.invalidateQueries({ queryKey: sessionKey })
+    },
+  })
+}
+
+export function useDisable2FA() {
+  const queryClient = useQueryClient()
+  return useMutation<void, ApiError, { password?: string; code?: string }>({
+    mutationFn: (body) => api.post<void>('/auth/2fa/disable', body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: twoFactorStatusKey })
+      void queryClient.invalidateQueries({ queryKey: sessionKey })
+    },
+  })
+}
+
+export function useRegenerateRecoveryCodes() {
+  return useMutation<{ recovery_codes: string[] }, ApiError, { password: string }>({
+    mutationFn: (body) => api.post<{ recovery_codes: string[] }>('/auth/2fa/recovery-codes', body),
+  })
+}
+

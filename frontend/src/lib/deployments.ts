@@ -167,6 +167,16 @@ export function useDeploymentWebhook(deploymentID: string) {
   })
 }
 
+export function useRotateDeploymentWebhook(deploymentID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<WebhookInfo, ApiError, void>({
+    mutationFn: () => api.post<WebhookInfo>(`/deployments/${deploymentID}/webhook/rotate`),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['deployments', deploymentID, 'webhook'], data)
+    },
+  })
+}
+
 export function useCancelRun(deploymentID: string) {
   const queryClient = useQueryClient()
   return useMutation<void, ApiError, string>({

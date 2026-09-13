@@ -369,6 +369,32 @@ func (s *Server) handleSetDeploymentEnv(w http.ResponseWriter, r *http.Request) 
 	return NoContent(w)
 }
 
+func (s *Server) publicAppURL(r *http.Request) string {
+	if s.Config.AppURL != "" && !strings.Contains(s.Config.AppURL, "localhost") && !strings.Contains(s.Config.AppURL, "127.0.0.1") {
+		return strings.TrimRight(s.Config.AppURL, "/")
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = strings.TrimSpace(strings.Split(proto, ",")[0])
+	} else if schemeHeader := r.Header.Get("X-Forwarded-Scheme"); schemeHeader != "" {
+		scheme = strings.TrimSpace(schemeHeader)
+	}
+
+	host := r.Host
+	if fHost := r.Header.Get("X-Forwarded-Host"); fHost != "" {
+		host = strings.TrimSpace(strings.Split(fHost, ",")[0])
+	}
+	if host != "" {
+		return fmt.Sprintf("%s://%s", scheme, host)
+	}
+
+	return strings.TrimRight(s.Config.AppURL, "/")
+}
+
 func (s *Server) handleGetDeploymentWebhook(w http.ResponseWriter, r *http.Request) error {
 	deployment, _, err := s.requireDeployment(r)
 	if err != nil {
@@ -380,12 +406,40 @@ func (s *Server) handleGetDeploymentWebhook(w http.ResponseWriter, r *http.Reque
 		return Internal(err)
 	}
 
-	appURL := strings.TrimRight(s.Config.AppURL, "/")
+	appURL := s.publicAppURL(r)
 	webhookURL := fmt.Sprintf("%s/api/deployments/%s/webhook", appURL, deployment.ID)
 
 	return JSON(w, s.Log, http.StatusOK, map[string]string{
 		"webhook_url":    webhookURL,
 		"webhook_secret": secret,
+	})
+}
+
+func (s *Server) handleRotateDeploymentWebhook(w http.ResponseWriter, r *http.Request) error {
+	deployment, _, err := s.requireDeployment(r)
+	if err != nil {
+		return err
+	}
+
+	newSecret, _, err := s.Hasher.NewToken()
+	if err != nil {
+		return Internal(err)
+	}
+
+	if err := s.Store.SetDeploymentWebhookSecret(r.Context(), s.Sealer, deployment.ID, newSecret); err != nil {
+		return Internal(err)
+	}
+
+	AuditResource(r.Context(), "deployments", deployment.ID)
+	AuditMeta(r.Context(), "event", "webhook_secret_rotated")
+	s.Log.Info("rotated deployment webhook secret", "deployment", deployment.ID)
+
+	appURL := s.publicAppURL(r)
+	webhookURL := fmt.Sprintf("%s/api/deployments/%s/webhook", appURL, deployment.ID)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]string{
+		"webhook_url":    webhookURL,
+		"webhook_secret": newSecret,
 	})
 }
 

@@ -6,8 +6,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // APITokenPrefix marks a bearer token so leak scanners and humans can both
@@ -83,3 +86,44 @@ func ParseBearer(header string) (string, bool) {
 	token := strings.TrimSpace(header[len(scheme):])
 	return token, token != ""
 }
+
+// Sign2FAToken signs an ephemeral login 2FA challenge token for a user ID.
+func (h *Hasher) Sign2FAToken(userID string, expiresAt time.Time) string {
+	payload := fmt.Sprintf("%s:%d", userID, expiresAt.Unix())
+	sig := h.Hash(payload)
+	return fmt.Sprintf("%s.%s", base64.RawURLEncoding.EncodeToString([]byte(payload)), base64.RawURLEncoding.EncodeToString(sig))
+}
+
+// Verify2FAToken verifies an ephemeral login 2FA challenge token and returns the user ID.
+func (h *Hasher) Verify2FAToken(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return "", errors.New("invalid 2fa token format")
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", errors.New("invalid 2fa token encoding")
+	}
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", errors.New("invalid 2fa token signature encoding")
+	}
+	expectedSig := h.Hash(string(payloadBytes))
+	if !h.Equal(sigBytes, expectedSig) {
+		return "", errors.New("invalid 2fa token signature")
+	}
+	payload := string(payloadBytes)
+	subParts := strings.Split(payload, ":")
+	if len(subParts) != 2 {
+		return "", errors.New("invalid 2fa token payload")
+	}
+	expUnix, err := strconv.ParseInt(subParts[1], 10, 64)
+	if err != nil {
+		return "", errors.New("invalid 2fa token expiry")
+	}
+	if time.Now().Unix() > expUnix {
+		return "", errors.New("2fa token expired")
+	}
+	return subParts[0], nil
+}
+

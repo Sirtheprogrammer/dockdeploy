@@ -44,6 +44,7 @@ import {
   useDeploymentEnv,
   useDeleteDeployment,
   useDeploymentWebhook,
+  useRotateDeploymentWebhook,
   useRuns,
   useSetDeploymentEnv,
   type EnvVar,
@@ -646,9 +647,27 @@ function DomainsTab({
  */
 function WebhookTab({ deploymentID }: { deploymentID: string }) {
   const webhook = useDeploymentWebhook(deploymentID)
+  const rotateWebhook = useRotateDeploymentWebhook(deploymentID)
   const [showSecret, setShowSecret] = useState(false)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [copiedSecret, setCopiedSecret] = useState(false)
+
+  const rawUrl = webhook.data?.webhook_url ?? ''
+  let effectiveUrl = rawUrl
+  if (rawUrl) {
+    try {
+      const parsed = new URL(rawUrl)
+      if (
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+      ) {
+        effectiveUrl = `${window.location.origin}${parsed.pathname}${parsed.search}`
+      }
+    } catch {
+      effectiveUrl = rawUrl
+    }
+  }
 
   if (webhook.isPending) {
     return (
@@ -667,10 +686,10 @@ function WebhookTab({ deploymentID }: { deploymentID: string }) {
     )
   }
 
-  const { webhook_url, webhook_secret } = webhook.data
+  const { webhook_secret } = webhook.data
 
   const copyUrl = () => {
-    void navigator.clipboard.writeText(webhook_url)
+    void navigator.clipboard.writeText(effectiveUrl)
     setCopiedUrl(true)
     setTimeout(() => setCopiedUrl(false), 2000)
   }
@@ -679,6 +698,16 @@ function WebhookTab({ deploymentID }: { deploymentID: string }) {
     void navigator.clipboard.writeText(webhook_secret)
     setCopiedSecret(true)
     setTimeout(() => setCopiedSecret(false), 2000)
+  }
+
+  const handleRotate = () => {
+    if (
+      window.confirm(
+        'Rotate Webhook Secret?\n\nExisting CI/CD or git webhooks using the old secret will fail until updated with the new secret.',
+      )
+    ) {
+      rotateWebhook.mutate()
+    }
   }
 
   return (
@@ -696,7 +725,7 @@ function WebhookTab({ deploymentID }: { deploymentID: string }) {
             <div className="flex items-center gap-2">
               <Input
                 readOnly
-                value={webhook_url}
+                value={effectiveUrl}
                 className="font-mono text-xs bg-muted/50"
               />
               <Button variant="outline" size="sm" onClick={copyUrl}>
@@ -727,7 +756,20 @@ function WebhookTab({ deploymentID }: { deploymentID: string }) {
                 {copiedSecret ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
                 {copiedSecret ? 'Copied' : 'Copy'}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRotate}
+                disabled={rotateWebhook.isPending}
+                title="Rotate secret"
+              >
+                {rotateWebhook.isPending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                Rotate
+              </Button>
             </div>
+            <p className="text-muted-foreground text-xs">
+              Secret is required to authenticate webhook triggers. You can rotate it at any time if compromised.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -769,13 +811,13 @@ function WebhookTab({ deploymentID }: { deploymentID: string }) {
             <div className="rounded bg-muted p-3 font-mono text-xs overflow-x-auto text-foreground">
               curl -X POST \<br />
               &nbsp;&nbsp;-H "Authorization: Bearer {webhook_secret}" \<br />
-              &nbsp;&nbsp;{webhook_url}
+              &nbsp;&nbsp;{effectiveUrl}
             </div>
             <p className="text-muted-foreground text-xs">
               Or pass the token in a query parameter:
             </p>
             <div className="rounded bg-muted p-3 font-mono text-xs overflow-x-auto text-foreground">
-              curl -X POST "{webhook_url}?token={webhook_secret}"
+              curl -X POST "{effectiveUrl}?token={webhook_secret}"
             </div>
           </div>
         </CardContent>

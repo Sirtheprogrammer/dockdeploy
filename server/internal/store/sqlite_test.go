@@ -466,3 +466,146 @@ func TestSQLiteStore_Domains(t *testing.T) {
 		t.Fatalf("DeleteDomain: %v", err)
 	}
 }
+
+func TestSQLiteStore_2FAAndWebhookRotation(t *testing.T) {
+	st, _ := setupTestSQLiteStore(t)
+	ctx := context.Background()
+	sealer := testSealer(t)
+
+	admin, err := st.CreateFirstAdmin(ctx, "admin2fa@example.com", "Admin 2FA", "hash")
+	if err != nil {
+		t.Fatalf("CreateFirstAdmin: %v", err)
+	}
+	if admin.TOTPEnabled {
+		t.Fatal("expected TOTPEnabled to be false initially")
+	}
+
+	// 1. Set TOTP secret
+	secretKey := "JBSWY3DPEHPK3PXP"
+	if err := st.SetUserTOTPSecret(ctx, sealer, admin.ID, secretKey); err != nil {
+		t.Fatalf("SetUserTOTPSecret: %v", err)
+	}
+
+	updatedAdmin, err := st.UserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	gotSecret, err := st.GetUserTOTPSecret(ctx, sealer, updatedAdmin)
+	if err != nil {
+		t.Fatalf("GetUserTOTPSecret: %v", err)
+	}
+	if gotSecret != secretKey {
+		t.Fatalf("got secret %q, want %q", gotSecret, secretKey)
+	}
+
+	// 2. Enable TOTP with recovery codes
+	recoveryCodes := []string{"1111-2222", "3333-4444"}
+	if err := st.EnableUserTOTP(ctx, sealer, admin.ID, recoveryCodes); err != nil {
+		t.Fatalf("EnableUserTOTP: %v", err)
+	}
+
+	enabledAdmin, err := st.UserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if !enabledAdmin.TOTPEnabled {
+		t.Fatal("expected TOTPEnabled to be true")
+	}
+
+	savedCodes, err := st.GetUserRecoveryCodes(ctx, sealer, enabledAdmin)
+	if err != nil {
+		t.Fatalf("GetUserRecoveryCodes: %v", err)
+	}
+	if len(savedCodes) != 2 || savedCodes[0] != "1111-2222" {
+		t.Fatalf("unexpected recovery codes: %v", savedCodes)
+	}
+
+	// 3. Consume recovery code
+	consumed, err := st.ConsumeRecoveryCode(ctx, sealer, enabledAdmin, "11112222")
+	if err != nil {
+		t.Fatalf("ConsumeRecoveryCode: %v", err)
+	}
+	if !consumed {
+		t.Fatal("expected recovery code to be consumed successfully")
+	}
+
+	// Consuming same code again should fail
+	consumedAgain, err := st.ConsumeRecoveryCode(ctx, sealer, enabledAdmin, "1111-2222")
+	if err != nil {
+		t.Fatalf("ConsumeRecoveryCode second time: %v", err)
+	}
+	if consumedAgain {
+		t.Fatal("expected already consumed recovery code to fail")
+	}
+
+	remainingCodes, err := st.GetUserRecoveryCodes(ctx, sealer, enabledAdmin)
+	if err != nil {
+		t.Fatalf("GetUserRecoveryCodes remaining: %v", err)
+	}
+	if len(remainingCodes) != 1 || remainingCodes[0] != "3333-4444" {
+		t.Fatalf("expected 1 remaining recovery code, got %v", remainingCodes)
+	}
+
+	// 4. Disable TOTP
+	if err := st.DisableUserTOTP(ctx, admin.ID); err != nil {
+		t.Fatalf("DisableUserTOTP: %v", err)
+	}
+	disabledAdmin, err := st.UserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if disabledAdmin.TOTPEnabled {
+		t.Fatal("expected TOTPEnabled to be false after disable")
+	}
+	if disabledAdmin.TOTPSecretID != nil {
+		t.Fatal("expected TOTPSecretID to be nil")
+	}
+
+	// 5. Test Webhook Secret Rotation
+	srv, err := st.CreateServer(ctx, sealer, NewServer{
+		Name:               "wh-srv",
+		Host:               "127.0.0.1",
+		Port:               22,
+		Username:           "root",
+		AuthMethod:         sshx.AuthPassword,
+		Password:           "pass",
+		HostKeyFingerprint: "key-fprint",
+		CreatedBy:          admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateServer: %v", err)
+	}
+	port := 20001
+	dep, err := st.CreateDeployment(ctx, sealer, NewDeployment{
+		ServerID:      srv.ID,
+		Name:          "wh-dep",
+		Slug:          "wh-dep",
+		SourceType:    SourceImage,
+		BuildStrategy: BuildRemote,
+		ImageRef:      "nginx:alpine",
+		ContainerPort: 80,
+		HostPort:      &port,
+		WebhookSecret: "initial-secret",
+		CreatedBy:     admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateDeployment: %v", err)
+	}
+
+	if err := st.SetDeploymentWebhookSecret(ctx, sealer, dep.ID, "new-secret-123"); err != nil {
+		t.Fatalf("SetDeploymentWebhookSecret: %v", err)
+	}
+
+	depUpdated, err := st.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatalf("DeploymentByID: %v", err)
+	}
+	sec, err := st.DeploymentWebhookSecret(ctx, sealer, depUpdated)
+	if err != nil {
+		t.Fatalf("DeploymentWebhookSecret: %v", err)
+	}
+	if sec != "new-secret-123" {
+		t.Fatalf("got webhook secret %q, want new-secret-123", sec)
+	}
+}
+

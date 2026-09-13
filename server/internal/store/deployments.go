@@ -541,3 +541,26 @@ func (s *Store) DeploymentWebhookSecret(ctx context.Context, sealer Sealer, depl
 	}
 	return s.openSecret(ctx, sealer, deployment.WebhookSecretID)
 }
+
+// SetDeploymentWebhookSecret updates or assigns the webhook secret for a deployment.
+func (s *Store) SetDeploymentWebhookSecret(ctx context.Context, sealer Sealer, deploymentID, secret string) error {
+	if s.sqlite != nil {
+		return s.sqlite.SetDeploymentWebhookSecret(ctx, sealer, deploymentID, secret)
+	}
+	deployment, err := s.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+	if deployment.WebhookSecretID != nil && *deployment.WebhookSecretID != "" {
+		return s.ReplaceSecret(ctx, sealer, *deployment.WebhookSecretID, secret)
+	}
+	return s.tx(ctx, func(tx pgx.Tx) error {
+		id, err := insertSecret(ctx, tx, sealer, KindWebhookSecret, secret)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE deployments SET webhook_secret_id = $1 WHERE id = $2`, id, deploymentID)
+		return wrap("store: update deployment webhook secret id", err)
+	})
+}
+

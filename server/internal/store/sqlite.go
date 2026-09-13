@@ -191,21 +191,21 @@ func (s *sqliteStore) CreateUser(ctx context.Context, email, name, passwordHash 
 
 func (s *sqliteStore) UserByEmail(ctx context.Context, email string) (*User, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, email, name, password_hash, role, status, last_login_at, created_at, updated_at
+		SELECT id, email, name, password_hash, role, status, last_login_at, totp_secret_id, totp_recovery_secret_id, totp_enabled, created_at, updated_at
 		FROM users WHERE email = $1`, NormaliseEmail(email))
 	return scanUser(row)
 }
 
 func (s *sqliteStore) UserByID(ctx context.Context, id string) (*User, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, email, name, password_hash, role, status, last_login_at, created_at, updated_at
+		SELECT id, email, name, password_hash, role, status, last_login_at, totp_secret_id, totp_recovery_secret_id, totp_enabled, created_at, updated_at
 		FROM users WHERE id = $1`, id)
 	return scanUser(row)
 }
 
 func (s *sqliteStore) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, email, name, password_hash, role, status, last_login_at, created_at, updated_at
+		SELECT id, email, name, password_hash, role, status, last_login_at, totp_secret_id, totp_recovery_secret_id, totp_enabled, created_at, updated_at
 		FROM users ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, wrapSQLite("store: list users", err)
@@ -300,11 +300,126 @@ func (s *sqliteStore) DeleteUser(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *sqliteStore) SetUserTOTPSecret(ctx context.Context, sealer Sealer, userID, secretBase32 string) error {
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.TOTPSecretID != nil && *user.TOTPSecretID != "" {
+		return s.ReplaceSecret(ctx, sealer, *user.TOTPSecretID, secretBase32)
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		id := newUUID()
+		nonce, ciphertext, err := sealer.SealString(secretBase32, []byte(id))
+		if err != nil {
+			return wrapSQLite("store: seal totp secret", err)
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO secrets (id, kind, nonce, ciphertext, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)`, id, KindTOTPSecret, nonce, ciphertext, now); err != nil {
+			return wrapSQLite("store: insert totp secret", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_secret_id = $1 WHERE id = $2`, id, userID); err != nil {
+			return wrapSQLite("store: update user totp secret id", err)
+		}
+		return nil
+	})
+}
+
+func (s *sqliteStore) EnableUserTOTP(ctx context.Context, sealer Sealer, userID string, recoveryCodes []string) error {
+	payload, err := json.Marshal(recoveryCodes)
+	if err != nil {
+		return err
+	}
+	user, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.TOTPRecoverySecretID != nil && *user.TOTPRecoverySecretID != "" {
+		if err := s.ReplaceSecret(ctx, sealer, *user.TOTPRecoverySecretID, string(payload)); err != nil {
+			return err
+		}
+		_, err = s.db.ExecContext(ctx, `UPDATE users SET totp_enabled = 1 WHERE id = $1`, userID)
+		return wrapSQLite("store: enable user totp", err)
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		id := newUUID()
+		nonce, ciphertext, err := sealer.SealString(string(payload), []byte(id))
+		if err != nil {
+			return wrapSQLite("store: seal totp recovery", err)
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO secrets (id, kind, nonce, ciphertext, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)`, id, KindTOTPRecovery, nonce, ciphertext, now); err != nil {
+			return wrapSQLite("store: insert totp recovery secret", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET totp_recovery_secret_id = $1, totp_enabled = 1 WHERE id = $2`, id, userID); err != nil {
+			return wrapSQLite("store: update user totp recovery secret id", err)
+		}
+		return nil
+	})
+}
+
+func (s *sqliteStore) DisableUserTOTP(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET totp_enabled = 0, totp_secret_id = NULL, totp_recovery_secret_id = NULL WHERE id = $1`, userID)
+	return wrapSQLite("store: disable user totp", err)
+}
+
+func (s *sqliteStore) GetUserTOTPSecret(ctx context.Context, sealer Sealer, user *User) (string, error) {
+	if user.TOTPSecretID == nil {
+		return "", errors.New("user has no totp secret")
+	}
+	return s.openSecret(ctx, sealer, user.TOTPSecretID)
+}
+
+func (s *sqliteStore) GetUserRecoveryCodes(ctx context.Context, sealer Sealer, user *User) ([]string, error) {
+	if user.TOTPRecoverySecretID == nil {
+		return nil, nil
+	}
+	raw, err := s.openSecret(ctx, sealer, user.TOTPRecoverySecretID)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	var codes []string
+	if err := json.Unmarshal([]byte(raw), &codes); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (s *sqliteStore) ConsumeRecoveryCode(ctx context.Context, sealer Sealer, user *User, code string) (bool, error) {
+	codes, err := s.GetUserRecoveryCodes(ctx, sealer, user)
+	if err != nil || len(codes) == 0 {
+		return false, err
+	}
+	target := auth.NormalizeRecoveryCode(code)
+	idx := -1
+	for i, c := range codes {
+		if auth.NormalizeRecoveryCode(c) == target {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false, nil
+	}
+	codes = append(codes[:idx], codes[idx+1:]...)
+	payload, err := json.Marshal(codes)
+	if err != nil {
+		return false, err
+	}
+	if err := s.ReplaceSecret(ctx, sealer, *user.TOTPRecoverySecretID, string(payload)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func scanUser(r interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	err := r.Scan(
 		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Role, &u.Status,
-		&u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.LastLoginAt, &u.TOTPSecretID, &u.TOTPRecoverySecretID, &u.TOTPEnabled, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		return nil, wrapSQLite("store: scan user", err)
@@ -1650,6 +1765,32 @@ func (s *sqliteStore) SecretEnvValues(ctx context.Context, sealer Sealer, deploy
 func (s *sqliteStore) DeploymentWebhookSecret(ctx context.Context, sealer Sealer, deployment *Deployment) (string, error) {
 	return s.openSecret(ctx, sealer, deployment.WebhookSecretID)
 }
+
+func (s *sqliteStore) SetDeploymentWebhookSecret(ctx context.Context, sealer Sealer, deploymentID, secret string) error {
+	deployment, err := s.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+	if deployment.WebhookSecretID != nil && *deployment.WebhookSecretID != "" {
+		return s.ReplaceSecret(ctx, sealer, *deployment.WebhookSecretID, secret)
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		id := newUUID()
+		nonce, ciphertext, err := sealer.SealString(secret, []byte(id))
+		if err != nil {
+			return wrapSQLite("store: seal webhook secret", err)
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO secrets (id, kind, nonce, ciphertext, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $5)`, id, KindWebhookSecret, nonce, ciphertext, now); err != nil {
+			return wrapSQLite("store: insert webhook secret", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET webhook_secret_id = $1 WHERE id = $2`, id, deploymentID); err != nil {
+			return wrapSQLite("store: update deployment webhook secret id", err)
+		}
+		return nil
+	})
+}
+
 
 func scanDeployment(r interface{ Scan(...any) error }) (*Deployment, error) {
 	var d Deployment
