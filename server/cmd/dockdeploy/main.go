@@ -21,6 +21,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/db"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/discovery"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
@@ -112,18 +113,20 @@ func run() error {
 	}()
 
 	nginxManager := nginxx.NewManager(st, sealer, serverManager, log)
+	discoveryService := discovery.NewService(st, sealer, serverManager, log)
 
 	srv := &api.Server{
-		Config:  cfg,
-		Log:     log,
-		Store:   st,
-		Sealer:  sealer,
-		Hasher:  auth.NewHasher(cfg.SessionSecret),
-		Servers: serverManager,
-		Deploys: engine,
-		Nginx:   nginxManager,
-		Started: time.Now(),
-		SPA:     web.Handler(log, `Run <code>npm run dev</code> in <code>frontend/</code> and open the Vite URL, or build the image to embed the dashboard.`),
+		Config:    cfg,
+		Log:       log,
+		Store:     st,
+		Sealer:    sealer,
+		Hasher:    auth.NewHasher(cfg.SessionSecret),
+		Servers:   serverManager,
+		Deploys:   engine,
+		Nginx:     nginxManager,
+		Discovery: discoveryService,
+		Started:   time.Now(),
+		SPA:       web.Handler(log, `Run <code>npm run dev</code> in <code>frontend/</code> and open the Vite URL, or build the image to embed the dashboard.`),
 	}
 
 	handler, err := srv.Routes()

@@ -22,6 +22,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { CapabilityList } from '@/components/servers/CapabilityList'
+import { AutoDetectDialog } from '@/components/servers/AutoDetectDialog'
 import { LogViewer } from '@/components/servers/LogViewer'
 import { ServerFileBrowser } from '@/components/servers/ServerFileBrowser'
 import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
@@ -122,6 +123,9 @@ export function ServerDetail() {
                 <ShieldAlert className="size-3.5 text-amber-500" aria-hidden />
                 Run Root Command
               </Button>
+            ) : null}
+            {canWrite ? (
+              <AutoDetectDialog serverID={serverID} serverName={server.data.name} />
             ) : null}
             {canWrite ? (
               <Button variant="outline" size="sm" onClick={() => setSudoDialogOpen(true)}>

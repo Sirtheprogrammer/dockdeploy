@@ -1,4 +1,4 @@
-import { Rocket, Server as ServerIcon } from 'lucide-react'
+import { Loader2, Rocket, Server as ServerIcon, Sparkles } from 'lucide-react'
 import { Link } from 'react-router'
 
 import { EmptyState } from '@/components/EmptyState'
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SOURCE_SHORT, useDeployments, type DeploymentStatus } from '@/lib/deployments'
 import { can, useSession } from '@/lib/session'
-import { useServers } from '@/lib/servers'
+import { useAutoDetectAllServers, useServers } from '@/lib/servers'
 import { formatRelative } from '@/lib/utils'
 
 const STATUS: Record<DeploymentStatus, { label: string; variant: 'success' | 'danger' | 'warning' | 'outline' }> = {
@@ -30,6 +30,7 @@ export function Deployments() {
   const { data: user } = useSession()
   const { data: deployments, isPending, isError, error } = useDeployments()
   const servers = useServers()
+  const autoDetectAll = useAutoDetectAllServers()
 
   const canCreate = can(user, 'deployment:write')
   const hasServers = (servers.data?.length ?? 0) > 0
@@ -39,7 +40,26 @@ export function Deployments() {
       <PageHeader
         title="Deployments"
         description="Applications built and run from a git repository or a compose file."
-        actions={canCreate && hasServers ? <NewDeploymentDialog /> : null}
+        actions={
+          hasServers && canCreate ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={autoDetectAll.isPending}
+                onClick={() => autoDetectAll.mutate()}
+              >
+                {autoDetectAll.isPending ? (
+                  <Loader2 className="animate-spin size-3.5" />
+                ) : (
+                  <Sparkles className="size-3.5 text-blue-500" />
+                )}
+                Auto-Detect Deployments
+              </Button>
+              <NewDeploymentDialog />
+            </div>
+          ) : null
+        }
       />
 
       <div className="p-6">

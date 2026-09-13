@@ -1,4 +1,4 @@
-import { KeyRound, Loader2, Plus, Trash2 } from 'lucide-react'
+import { KeyRound, Loader2, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
 
 import { FieldError } from '@/components/AuthLayout'
@@ -35,6 +35,7 @@ import {
   useGitCredentials,
   useRegistries,
 } from '@/lib/deployments'
+import { useAutoDetectAllServers, useServers } from '@/lib/servers'
 import { formatRelative } from '@/lib/utils'
 
 function AddGitCredentialDialog() {
@@ -316,6 +317,10 @@ export function Credentials() {
   const registries = useRegistries()
   const removeCredential = useDeleteGitCredential()
   const removeRegistry = useDeleteRegistry()
+  const servers = useServers()
+  const autoDetectAll = useAutoDetectAllServers()
+
+  const hasServers = (servers.data?.length ?? 0) > 0
 
   return (
     <div className="grid max-w-4xl gap-4">
@@ -328,7 +333,24 @@ export function Credentials() {
               AES-256-GCM and are never returned by the API.
             </CardDescription>
           </div>
-          <AddGitCredentialDialog />
+          <div className="flex items-center gap-2">
+            {hasServers ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={autoDetectAll.isPending}
+                onClick={() => autoDetectAll.mutate()}
+              >
+                {autoDetectAll.isPending ? (
+                  <Loader2 className="animate-spin size-3.5" />
+                ) : (
+                  <Sparkles className="size-3.5 text-blue-500" />
+                )}
+                Scan Servers
+              </Button>
+            ) : null}
+            <AddGitCredentialDialog />
+          </div>
         </CardHeader>
         <CardContent className="px-0">
           {removeCredential.isError ? (
@@ -357,7 +379,19 @@ export function Credentials() {
               <TableBody>
                 {gitCredentials.data?.map((credential) => (
                   <TableRow key={credential.id}>
-                    <TableCell className="font-medium">{credential.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-1.5">
+                        <span>{credential.name}</span>
+                        {credential.name.startsWith('Server ') ? (
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/30 text-[10px] text-emerald-500 font-normal"
+                          >
+                            Auto-saved
+                          </Badge>
+                        ) : null}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline">
                         {credential.kind === 'token' ? 'Token' : 'SSH key'}

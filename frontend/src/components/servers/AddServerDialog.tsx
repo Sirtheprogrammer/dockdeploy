@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 
 import { FieldError } from '@/components/AuthLayout'
 import { CapabilityList } from '@/components/servers/CapabilityList'
+import { DiscoverySummaryView } from '@/components/servers/AutoDetectDialog'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -341,6 +342,13 @@ export function AddServerDialog() {
             </DialogHeader>
 
             <CapabilityList capabilities={result.capabilities as Capabilities | null} />
+
+            {result.discovery ? (
+              <div className="border-t pt-3">
+                <p className="mb-2 text-xs font-semibold text-foreground">Auto-Detected Resources</p>
+                <DiscoverySummaryView report={result.discovery} />
+              </div>
+            ) : null}
 
             <DialogFooter>
               <Button variant="outline" onClick={reset}>

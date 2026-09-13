@@ -2033,6 +2033,11 @@ func (s *sqliteStore) UpdateDomainStatus(ctx context.Context, id string, params 
 	args := []any{params.Status, params.StatusMessage, now}
 	idx := 4
 
+	if params.DeploymentID != nil {
+		query += fmt.Sprintf(`, deployment_id = $%d`, idx)
+		args = append(args, nullable(*params.DeploymentID))
+		idx++
+	}
 	if params.ConfigRendered != nil {
 		query += fmt.Sprintf(`, config_rendered = $%d`, idx)
 		args = append(args, *params.ConfigRendered)

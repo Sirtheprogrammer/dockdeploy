@@ -12,6 +12,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -49,7 +50,7 @@ import {
   useSyncDomain,
   type Domain,
 } from '@/lib/domains'
-import { useServers } from '@/lib/servers'
+import { useAutoDetectAllServers, useServers } from '@/lib/servers'
 import { formatExpiration } from '@/lib/utils'
 
 export function Domains() {
@@ -62,6 +63,7 @@ export function Domains() {
     selectedServer !== 'all' ? { server_id: selectedServer } : undefined,
   )
   const serversQuery = useServers()
+  const autoDetectAll = useAutoDetectAllServers()
   const deleteMutation = useDeleteDomain()
   const issueSSLMutation = useIssueSSL()
   const syncMutation = useSyncDomain()
@@ -76,7 +78,35 @@ export function Domains() {
       <PageHeader
         title="Domains"
         description="Nginx virtual hosts and automated Let's Encrypt TLS certificates on your servers."
-        actions={<AddDomainDialog />}
+        actions={
+          <div className="flex items-center gap-2">
+            {(serversQuery.data?.length ?? 0) > 0 ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={autoDetectAll.isPending}
+                onClick={() =>
+                  autoDetectAll.mutate(undefined, {
+                    onSuccess: () => {
+                      toast.success('Auto-detection completed across servers!')
+                    },
+                    onError: (err) => {
+                      toast.error(err.message || 'Auto-detection failed')
+                    },
+                  })
+                }
+              >
+                {autoDetectAll.isPending ? (
+                  <Loader2 className="animate-spin size-3.5" />
+                ) : (
+                  <Sparkles className="size-3.5 text-blue-500" />
+                )}
+                Auto-Detect Domains
+              </Button>
+            ) : null}
+            <AddDomainDialog />
+          </div>
+        }
       />
 
       <div className="space-y-4">

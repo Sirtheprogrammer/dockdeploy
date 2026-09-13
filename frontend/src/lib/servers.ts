@@ -122,6 +122,7 @@ export interface CreateServerInput {
 export interface CreateServerResult {
   server: Server
   capabilities: Capabilities | null
+  discovery?: DiscoveryReport | null
 }
 
 export function useCreateServer() {
@@ -130,6 +131,9 @@ export function useCreateServer() {
     mutationFn: (body) => api.post<CreateServerResult>('/servers', body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: ['deployments'] })
+      void queryClient.invalidateQueries({ queryKey: ['domains'] })
+      void queryClient.invalidateQueries({ queryKey: ['git-credentials'] })
     },
   })
 }
@@ -532,5 +536,64 @@ export function useExecRoot(serverID: string) {
   })
 }
 
+export interface DiscoveredDomain {
+  id: string
+  hostname: string
+  upstream_port: number
+  ssl_mode: string
+  action: 'created' | 'updated' | 'existing'
+}
 
+export interface DiscoveredDeployment {
+  id: string
+  name: string
+  slug: string
+  source_type: string
+  status: string
+  action: 'created' | 'updated' | 'existing'
+}
 
+export interface DiscoveredCredential {
+  id: string
+  name: string
+  kind: string
+  username: string
+  action: 'saved' | 'existing'
+}
+
+export interface DiscoveryReport {
+  server_id: string
+  server_name: string
+  domains: DiscoveredDomain[]
+  deployments: DiscoveredDeployment[]
+  credentials: DiscoveredCredential[]
+  errors?: string[]
+}
+
+export function useAutoDetectServer() {
+  const queryClient = useQueryClient()
+  return useMutation<{ server_id: string; discovery: DiscoveryReport }, ApiError, string>({
+    mutationFn: (serverID: string) => api.post(`/servers/${serverID}/autodetect`, {}),
+    onSuccess: (_, serverID) => {
+      void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: serverKey(serverID) })
+      void queryClient.invalidateQueries({ queryKey: ['containers', serverID] })
+      void queryClient.invalidateQueries({ queryKey: ['deployments'] })
+      void queryClient.invalidateQueries({ queryKey: ['domains'] })
+      void queryClient.invalidateQueries({ queryKey: ['git-credentials'] })
+    },
+  })
+}
+
+export function useAutoDetectAllServers() {
+  const queryClient = useQueryClient()
+  return useMutation<{ reports: DiscoveryReport[] }, ApiError, void>({
+    mutationFn: () => api.post('/servers/autodetect-all', {}),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: serversKey })
+      void queryClient.invalidateQueries({ queryKey: ['deployments'] })
+      void queryClient.invalidateQueries({ queryKey: ['domains'] })
+      void queryClient.invalidateQueries({ queryKey: ['git-credentials'] })
+    },
+  })
+}

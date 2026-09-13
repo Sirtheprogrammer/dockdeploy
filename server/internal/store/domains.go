@@ -194,6 +194,7 @@ func (s *Store) ListDomainsByDeployment(ctx context.Context, deploymentID string
 }
 
 type UpdateDomainParams struct {
+	DeploymentID   *string
 	ConfigRendered *string
 	CertExpiresAt  *time.Time
 	Status         DomainStatus
@@ -208,6 +209,11 @@ func (s *Store) UpdateDomainStatus(ctx context.Context, id string, params Update
 	args := []any{params.Status, params.StatusMessage}
 	idx := 3
 
+	if params.DeploymentID != nil {
+		query += fmt.Sprintf(`, deployment_id = $%d`, idx)
+		args = append(args, nullable(*params.DeploymentID))
+		idx++
+	}
 	if params.ConfigRendered != nil {
 		query += fmt.Sprintf(`, config_rendered = $%d`, idx)
 		args = append(args, *params.ConfigRendered)

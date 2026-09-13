@@ -168,9 +168,22 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) erro
 		return Internal(err)
 	}
 
+	var discoveryReport any
+	if probeErr == nil && s.Discovery != nil {
+		discCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 40*time.Second)
+		report, dErr := s.Discovery.DiscoverServer(discCtx, refreshed, actor.User.ID)
+		cancel()
+		if dErr != nil {
+			s.Log.Warn("auto-discovery on new server failed", "server", created.ID, "error", dErr)
+		} else {
+			discoveryReport = report
+		}
+	}
+
 	return JSON(w, s.Log, http.StatusCreated, map[string]any{
 		"server":       newServerResponse(*refreshed),
 		"capabilities": caps,
+		"discovery":    discoveryReport,
 	})
 }
 
@@ -515,6 +528,59 @@ func (s *Server) handleExecRoot(w http.ResponseWriter, r *http.Request) error {
 		Stderr:   res.Stderr,
 		ExitCode: res.ExitCode,
 		Success:  res.Ok(),
+	})
+}
+
+func (s *Server) handleAutoDetectServer(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+	if s.Discovery == nil {
+		return Internal(fmt.Errorf("discovery service not initialized"))
+	}
+
+	actor := MustIdentity(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	report, err := s.Discovery.DiscoverServer(ctx, server, actor.User.ID)
+	if err != nil {
+		return Internal(fmt.Errorf("auto-detect server %s: %w", server.Name, err))
+	}
+
+	AuditResource(r.Context(), "servers", server.ID)
+	AuditMeta(r.Context(), "action", "autodetect")
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"server_id": server.ID,
+		"discovery": report,
+	})
+}
+
+func (s *Server) handleAutoDetectAllServers(w http.ResponseWriter, r *http.Request) error {
+	if s.Discovery == nil {
+		return Internal(fmt.Errorf("discovery service not initialized"))
+	}
+
+	actor := MustIdentity(r.Context())
+	servers, err := s.Store.ListServers(r.Context(), actor.User.ID, actor.Role() == auth.RoleAdmin)
+	if err != nil {
+		return Internal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+
+	reports, err := s.Discovery.DiscoverAll(ctx, servers, actor.User.ID)
+	if err != nil {
+		return Internal(fmt.Errorf("auto-detect all servers: %w", err))
+	}
+
+	AuditMeta(r.Context(), "action", "autodetect_all")
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{
+		"reports": reports,
 	})
 }
 

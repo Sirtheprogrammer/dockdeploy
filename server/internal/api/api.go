@@ -12,6 +12,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/discovery"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
@@ -33,6 +34,8 @@ type Server struct {
 	Deploys *deploy.Engine
 	// Nginx manages virtual hosts, TLS certificates and reloads.
 	Nginx *nginxx.Manager
+	// Discovery auto-detects domains, deployments, and credentials on servers.
+	Discovery *discovery.Service
 
 	// SPA serves the built frontend. Requests that do not match /api are
 	// handed here, so the controller runs as a single container.
@@ -112,10 +115,12 @@ func (s *Server) Routes() (http.Handler, error) {
 
 			sv.guarded(http.MethodGet, "/", auth.PermServerRead, s.handleListServers)
 			sv.guarded(http.MethodPost, "/", auth.PermServerWrite, s.handleCreateServer)
+			sv.guarded(http.MethodPost, "/autodetect-all", auth.PermServerWrite, s.handleAutoDetectAllServers)
 			sv.guarded(http.MethodGet, "/{serverID}", auth.PermServerRead, s.handleGetServer)
 			sv.guarded(http.MethodPatch, "/{serverID}", auth.PermServerWrite, s.handleUpdateServer)
 			sv.guarded(http.MethodDelete, "/{serverID}", auth.PermServerDelete, s.handleDeleteServer)
 			sv.guarded(http.MethodPost, "/{serverID}/probe", auth.PermServerRead, s.handleProbeServer)
+			sv.guarded(http.MethodPost, "/{serverID}/autodetect", auth.PermServerWrite, s.handleAutoDetectServer)
 
 			// Granting access to a machine is user management, not server
 			// operation, so it takes the stronger permission.
