@@ -2235,3 +2235,264 @@ func nullablePtr(s *string) *string {
 	}
 	return s
 }
+
+// --- AI Assistant ---
+
+func (s *sqliteStore) GetAISettings(ctx context.Context, userID string) (*AISettings, error) {
+	var row AISettings
+	var apiKeySecretID sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, provider, model, base_url, api_key_secret_id, temperature, system_prompt_custom, created_at, updated_at
+		FROM ai_settings WHERE user_id = $1`, userID).Scan(
+		&row.UserID, &row.Provider, &row.Model, &row.BaseURL, &apiKeySecretID,
+		&row.Temperature, &row.SystemPromptCustom, &row.CreatedAt, &row.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			def := DefaultAISettings(userID)
+			return &def, nil
+		}
+		return nil, wrapSQLite("store: get ai settings", err)
+	}
+	if apiKeySecretID.Valid {
+		row.APIKeySecretID = &apiKeySecretID.String
+		row.HasAPIKey = true
+	}
+	return &row, nil
+}
+
+func (s *sqliteStore) UpsertAISettings(
+	ctx context.Context,
+	sealer Sealer,
+	userID, provider, model, baseURL, apiKey, systemPromptCustom string,
+	temperature float64,
+) (*AISettings, error) {
+	var updated AISettings
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var existingSecretID sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT api_key_secret_id FROM ai_settings WHERE user_id = $1`, userID).Scan(&existingSecretID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return wrapSQLite("store: check existing ai settings", err)
+		}
+
+		var secretID *string
+		if existingSecretID.Valid {
+			secretID = &existingSecretID.String
+		}
+
+		if apiKey != "" {
+			newSecretID, err := s.insertSecret(ctx, tx, sealer, KindAIToken, apiKey)
+			if err != nil {
+				return err
+			}
+			secretID = newSecretID
+
+			if existingSecretID.Valid {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = $1`, existingSecretID.String); err != nil {
+					return wrapSQLite("store: delete old ai secret", err)
+				}
+			}
+		}
+
+		now := time.Now().UTC()
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO ai_settings (user_id, provider, model, base_url, api_key_secret_id, temperature, system_prompt_custom, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+			ON CONFLICT(user_id) DO UPDATE SET
+				provider = excluded.provider,
+				model = excluded.model,
+				base_url = excluded.base_url,
+				api_key_secret_id = COALESCE(excluded.api_key_secret_id, ai_settings.api_key_secret_id),
+				temperature = excluded.temperature,
+				system_prompt_custom = excluded.system_prompt_custom,
+				updated_at = excluded.updated_at`,
+			userID, provider, model, baseURL, secretID, temperature, systemPromptCustom, now)
+		if err != nil {
+			return wrapSQLite("store: upsert ai settings", err)
+		}
+
+		var apiKeySec sql.NullString
+		err = tx.QueryRowContext(ctx, `
+			SELECT user_id, provider, model, base_url, api_key_secret_id, temperature, system_prompt_custom, created_at, updated_at
+			FROM ai_settings WHERE user_id = $1`, userID).Scan(
+			&updated.UserID, &updated.Provider, &updated.Model, &updated.BaseURL, &apiKeySec,
+			&updated.Temperature, &updated.SystemPromptCustom, &updated.CreatedAt, &updated.UpdatedAt,
+		)
+		if err != nil {
+			return wrapSQLite("store: scan ai settings", err)
+		}
+		if apiKeySec.Valid {
+			updated.APIKeySecretID = &apiKeySec.String
+			updated.HasAPIKey = true
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &updated, nil
+}
+
+func (s *sqliteStore) GetAIAPIKey(ctx context.Context, sealer Sealer, userID string) (string, error) {
+	var secretID sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT api_key_secret_id FROM ai_settings WHERE user_id = $1`, userID).Scan(&secretID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", wrapSQLite("store: get ai secret id", err)
+	}
+	if !secretID.Valid {
+		return "", nil
+	}
+	return s.openSecret(ctx, sealer, &secretID.String)
+}
+
+func (s *sqliteStore) ListAIConversations(ctx context.Context, userID string) ([]AIConversation, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, user_id, title, created_at, updated_at
+		FROM ai_conversations
+		WHERE user_id = $1
+		ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return nil, wrapSQLite("store: list ai conversations", err)
+	}
+	defer rows.Close()
+
+	var convs []AIConversation
+	for rows.Next() {
+		var c AIConversation
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, wrapSQLite("store: scan ai conversation", err)
+		}
+		convs = append(convs, c)
+	}
+	return convs, rows.Err()
+}
+
+func (s *sqliteStore) CreateAIConversation(ctx context.Context, userID, title string) (*AIConversation, error) {
+	if title == "" {
+		title = "New Chat"
+	}
+	id := newUUID()
+	now := time.Now().UTC()
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO ai_conversations (id, user_id, title, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $4)`, id, userID, title, now)
+	if err != nil {
+		return nil, wrapSQLite("store: create ai conversation", err)
+	}
+
+	return &AIConversation{
+		ID:        id,
+		UserID:    userID,
+		Title:     title,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+func (s *sqliteStore) GetAIConversation(ctx context.Context, conversationID, userID string) (*AIConversation, []AIMessage, error) {
+	var c AIConversation
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, title, created_at, updated_at
+		FROM ai_conversations
+		WHERE id = $1 AND user_id = $2`, conversationID, userID).Scan(&c.ID, &c.UserID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, nil, wrapSQLite("store: get ai conversation", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, conversation_id, role, content, metadata, created_at
+		FROM ai_messages
+		WHERE conversation_id = $1
+		ORDER BY created_at ASC`, conversationID)
+	if err != nil {
+		return nil, nil, wrapSQLite("store: list ai messages", err)
+	}
+	defer rows.Close()
+
+	var messages []AIMessage
+	for rows.Next() {
+		var m AIMessage
+		var rawMeta string
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &rawMeta, &m.CreatedAt); err != nil {
+			return nil, nil, wrapSQLite("store: scan ai message", err)
+		}
+		m.Metadata = json.RawMessage(rawMeta)
+		messages = append(messages, m)
+	}
+	return &c, messages, rows.Err()
+}
+
+func (s *sqliteStore) DeleteAIConversation(ctx context.Context, conversationID, userID string) error {
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM ai_conversations
+		WHERE id = $1 AND user_id = $2`, conversationID, userID)
+	if err != nil {
+		return wrapSQLite("store: delete ai conversation", err)
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) UpdateAIConversationTitle(ctx context.Context, conversationID, userID, title string) error {
+	now := time.Now().UTC()
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE ai_conversations
+		SET title = $1, updated_at = $2
+		WHERE id = $3 AND user_id = $4`, title, now, conversationID, userID)
+	if err != nil {
+		return wrapSQLite("store: update ai conversation title", err)
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *sqliteStore) AddAIMessage(ctx context.Context, conversationID, role, content string, metadata json.RawMessage) (*AIMessage, error) {
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	id := newUUID()
+	now := time.Now().UTC()
+
+	var msg AIMessage
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ai_messages (id, conversation_id, role, content, metadata, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)`, id, conversationID, role, content, string(metadata), now)
+		if err != nil {
+			return wrapSQLite("store: insert ai message", err)
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE ai_conversations SET updated_at = $1 WHERE id = $2`, now, conversationID)
+		if err != nil {
+			return wrapSQLite("store: update conversation updated_at", err)
+		}
+
+		msg = AIMessage{
+			ID:             id,
+			ConversationID: conversationID,
+			Role:           role,
+			Content:        content,
+			Metadata:       metadata,
+			CreatedAt:      now,
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+

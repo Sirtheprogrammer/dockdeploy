@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 
 import { HealthIndicator } from '@/components/HealthIndicator'
+import { AIAssistant } from '@/components/ai/AIAssistant'
 import { UserMenu } from '@/components/layout/UserMenu'
 import { cn } from '@/lib/utils'
 
@@ -17,6 +18,11 @@ const NAV = [
 export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
+
+  const serverMatch = location.pathname.match(/\/servers\/([a-zA-Z0-9_-]+)/)
+  const deploymentMatch = location.pathname.match(/\/deployments\/([a-zA-Z0-9_-]+)/)
+  const currentServerId = serverMatch ? serverMatch[1] : undefined
+  const currentDeploymentId = deploymentMatch ? deploymentMatch[1] : undefined
 
   return (
     <div className="bg-surface flex min-h-screen">
@@ -184,6 +190,8 @@ export function AppShell() {
           })}
         </nav>
       </div>
+
+      <AIAssistant serverId={currentServerId} deploymentId={currentDeploymentId} />
     </div>
   )
 }

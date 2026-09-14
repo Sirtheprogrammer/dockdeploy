@@ -12,6 +12,7 @@ import { Overview } from '@/routes/Overview'
 import { ServerDetail } from '@/routes/ServerDetail'
 import { Servers } from '@/routes/Servers'
 import { Setup } from '@/routes/Setup'
+import { AIAssistantSettings } from '@/routes/settings/AIAssistantSettings'
 import { Audit } from '@/routes/settings/Audit'
 import { Credentials } from '@/routes/settings/Credentials'
 import { Profile } from '@/routes/settings/Profile'
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Profile />} />
             <Route path="profile" element={<Profile />} />
+            <Route path="ai" element={<AIAssistantSettings />} />
             <Route path="tokens" element={<Tokens />} />
             <Route path="credentials" element={<Credentials />} />
             <Route path="users" element={<Users />} />

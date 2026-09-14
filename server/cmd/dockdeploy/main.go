@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/ai"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/api"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
@@ -114,6 +115,7 @@ func run() error {
 
 	nginxManager := nginxx.NewManager(st, sealer, serverManager, log)
 	discoveryService := discovery.NewService(st, sealer, serverManager, log)
+	aiService := ai.NewService(st, sealer, serverManager)
 
 	srv := &api.Server{
 		Config:    cfg,
@@ -125,6 +127,7 @@ func run() error {
 		Deploys:   engine,
 		Nginx:     nginxManager,
 		Discovery: discoveryService,
+		AI:        aiService,
 		Started:   time.Now(),
 		SPA:       web.Handler(log, `Run <code>npm run dev</code> in <code>frontend/</code> and open the Vite URL, or build the image to embed the dashboard.`),
 	}

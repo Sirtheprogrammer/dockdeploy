@@ -30,6 +30,7 @@ const (
 	KindWebhookSecret = secrets.KindWebhookSecret
 	KindTOTPSecret    = secrets.KindTOTPSecret
 	KindTOTPRecovery  = secrets.KindTOTPRecovery
+	KindAIToken       = secrets.KindAIToken
 )
 
 // insertSecret seals a value and stores it, returning the new row id.

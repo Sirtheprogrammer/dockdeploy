@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/ai"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
@@ -36,6 +37,8 @@ type Server struct {
 	Nginx *nginxx.Manager
 	// Discovery auto-detects domains, deployments, and credentials on servers.
 	Discovery *discovery.Service
+	// AI owns multi-provider chat, server diagnostics, and safeguards.
+	AI *ai.Service
 
 	// SPA serves the built frontend. Requests that do not match /api are
 	// handed here, so the controller runs as a single container.
@@ -206,6 +209,20 @@ func (s *Server) Routes() (http.Handler, error) {
 			g.guarded(http.MethodGet, "/", auth.PermCredentialRead, s.handleListGitCredentials)
 			g.guarded(http.MethodPost, "/", auth.PermCredentialWrite, s.handleCreateGitCredential)
 			g.guarded(http.MethodDelete, "/{credentialID}", auth.PermCredentialWrite, s.handleDeleteGitCredential)
+		})
+
+		api.group("/ai", func(a routes) {
+			a.guarded(http.MethodGet, "/settings", auth.PermSelf, s.handleGetAISettings)
+			a.guarded(http.MethodPut, "/settings", auth.PermSelf, s.handleUpdateAISettings)
+			a.guarded(http.MethodPost, "/test", auth.PermSelf, s.handleTestAIConnection)
+
+			a.guarded(http.MethodGet, "/conversations", auth.PermSelf, s.handleListAIConversations)
+			a.guarded(http.MethodPost, "/conversations", auth.PermSelf, s.handleCreateAIConversation)
+			a.guarded(http.MethodGet, "/conversations/{conversationID}", auth.PermSelf, s.handleGetAIConversation)
+			a.guarded(http.MethodDelete, "/conversations/{conversationID}", auth.PermSelf, s.handleDeleteAIConversation)
+
+			a.guarded(http.MethodPost, "/chat", auth.PermSelf, s.handleAIChat)
+			a.guarded(http.MethodGet, "/diagnose/servers/{serverID}", auth.PermServerRead, s.handleAIDiagnoseServer)
 		})
 
 		api.guarded(http.MethodGet, "/audit", auth.PermAuditRead, s.handleListAudit)

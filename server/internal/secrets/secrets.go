@@ -35,6 +35,7 @@ const (
 	KindWebhookSecret Kind = "webhook_secret"
 	KindTOTPSecret    Kind = "totp_secret"
 	KindTOTPRecovery  Kind = "totp_recovery"
+	KindAIToken       Kind = "ai_token"
 )
 
 // Sealer encrypts and decrypts with a single process-wide key.

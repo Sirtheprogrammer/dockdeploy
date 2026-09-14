@@ -9,6 +9,7 @@ export function SettingsLayout() {
 
   const tabs = [
     { to: '/settings', label: 'Profile', end: true, show: true },
+    { to: '/settings/ai', label: 'AI Assistant', show: true },
     { to: '/settings/tokens', label: 'API tokens', show: true },
     { to: '/settings/credentials', label: 'Credentials', show: can(user, 'credential:read') },
     { to: '/settings/users', label: 'Users', show: can(user, 'user:read') },
