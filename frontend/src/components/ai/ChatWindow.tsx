@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowDown,
   Bot,
   FileCode2,
   Loader2,
@@ -17,8 +18,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 
-import { CodeBlock } from '@/components/ai/CodeBlock'
-import { SafeguardCard } from '@/components/ai/SafeguardCard'
+import { AssistantMessage } from '@/components/ai/AssistantMessage'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,10 +47,6 @@ interface ChatWindowProps {
   initialDeploymentId?: string
   onClose?: () => void
 }
-
-type SnippetPart =
-  | { type: 'text'; content: string }
-  | { type: 'code'; language: string; code: string }
 
 export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowProps) {
   const { data: settings } = useAISettings()
@@ -92,12 +88,29 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
   const [pendingAction, setPendingAction] = useState<SafeguardAction | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+
+  function handleScroll() {
+    if (!scrollRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
+    setIsAtBottom(scrollHeight - scrollTop - clientHeight <= 60)
+  }
+
+  function scrollToBottom() {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth',
+      })
+      setIsAtBottom(true)
+    }
+  }
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (isAtBottom && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [messages, streamingContent, pendingAction])
+  }, [messages, streamingContent, pendingAction, isAtBottom])
 
   async function handleNewChat() {
     try {
@@ -253,65 +266,7 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
     }
   }
 
-  function renderContentWithSnippets(content: string, actionFromMeta?: SafeguardAction) {
-    const safeguardRegex = /```safeguard_action\s*(\{[\s\S]*?\})\s*```/g
-    let actionObj = actionFromMeta
 
-    const sanitizedContent = content.replace(safeguardRegex, (_, jsonStr) => {
-      try {
-        if (!actionObj) {
-          actionObj = JSON.parse(jsonStr)
-        }
-      } catch {
-        // ignore malformed safeguard action
-      }
-      return ''
-    })
-
-    const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g
-    const parts: SnippetPart[] = []
-    let lastIdx = 0
-    let match: RegExpExecArray | null
-
-    while ((match = codeBlockRegex.exec(sanitizedContent)) !== null) {
-      if (match.index > lastIdx) {
-        parts.push({
-          type: 'text',
-          content: sanitizedContent.substring(lastIdx, match.index),
-        })
-      }
-      const code = match[2] ? match[2].trim() : ''
-      parts.push({
-        type: 'code',
-        language: match[1] || 'text',
-        code,
-      })
-      lastIdx = match.index + match[0].length
-    }
-
-    if (lastIdx < sanitizedContent.length) {
-      parts.push({
-        type: 'text',
-        content: sanitizedContent.substring(lastIdx),
-      })
-    }
-
-    return (
-      <div className="space-y-2 text-xs leading-relaxed text-zinc-100">
-        {parts.map((p, idx) =>
-          p.type === 'code' ? (
-            <CodeBlock key={idx} language={p.language} code={p.code} />
-          ) : (
-            <p key={idx} className="whitespace-pre-wrap">
-              {p.content}
-            </p>
-          ),
-        )}
-
-        {actionObj && <SafeguardCard action={actionObj} />}
-      </div>
-    )
-  }
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -415,143 +370,162 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
       </div>
 
       {/* Messages Scroll Area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 && !streamingContent && (
-          <div className="flex flex-col items-center justify-center h-full text-center py-8 px-4">
-            <div className="bg-primary/10 text-primary p-3 rounded-2xl mb-3">
-              <Sparkles className="size-6" />
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 && !streamingContent && (
+            <div className="flex flex-col items-center justify-center h-full text-center py-8 px-4">
+              <div className="bg-primary/10 text-primary p-3 rounded-2xl mb-3">
+                <Sparkles className="size-6" />
+              </div>
+              <h4 className="font-semibold text-sm tracking-tight">Dockdeploy Multipurpose AI</h4>
+              <p className="text-muted-foreground text-xs max-w-sm mt-1 mb-6">
+                Diagnose servers, troubleshoot container crash loops, inspect logs, and generate safe Nginx configs with built-in safeguard permissions.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md text-left">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSendMessage(
+                      'Run a comprehensive diagnostic check on the active server. Check CPU, memory, disk, and container crash loops.',
+                    )
+                  }
+                  className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+                >
+                  <Stethoscope className="size-4 text-emerald-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-foreground block">Diagnose Server</span>
+                    <span className="text-[11px]">Inspect health & container states</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSendMessage(
+                      'Inspect the recent logs of failing or restarting containers and identify the root cause.',
+                    )
+                  }
+                  className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+                >
+                  <AlertCircle className="size-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-foreground block">Analyze Crash Logs</span>
+                    <span className="text-[11px]">Find OOM, exit codes & stacktraces</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSendMessage(
+                      'Generate an Nginx reverse proxy configuration for domain app.example.com forwarding to port 3000 with WebSocket and SSL Let\'s Encrypt support.',
+                    )
+                  }
+                  className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+                >
+                  <FileCode2 className="size-4 text-blue-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-foreground block">Generate Nginx Config</span>
+                    <span className="text-[11px]">Reverse proxy, WebSocket & SSL</span>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleSendMessage(
+                      'How do I troubleshoot a 502 Bad Gateway error between Nginx and a Docker container on this server?',
+                    )
+                  }
+                  className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+                >
+                  <RotateCcw className="size-4 text-purple-500 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium text-foreground block">Fix 502 Bad Gateway</span>
+                    <span className="text-[11px]">Network ports, sockets & upstreams</span>
+                  </div>
+                </button>
+              </div>
             </div>
-            <h4 className="font-semibold text-sm tracking-tight">Dockdeploy Multipurpose AI</h4>
-            <p className="text-muted-foreground text-xs max-w-sm mt-1 mb-6">
-              Diagnose servers, troubleshoot container crash loops, inspect logs, and generate safe Nginx configs with built-in safeguard permissions.
-            </p>
+          )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-md text-left">
-              <button
-                type="button"
-                onClick={() =>
-                  handleSendMessage(
-                    'Run a comprehensive diagnostic check on the active server. Check CPU, memory, disk, and container crash loops.',
-                  )
-                }
-                className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={cn(
+                'flex gap-2.5 max-w-[92%]',
+                m.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
+              )}
+            >
+              <div
+                className={cn(
+                  'size-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5',
+                  m.role === 'user'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-zinc-800 text-primary',
+                )}
               >
-                <Stethoscope className="size-4 text-emerald-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-medium text-foreground block">Diagnose Server</span>
-                  <span className="text-[11px]">Inspect health & container states</span>
-                </div>
-              </button>
+                {m.role === 'user' ? <User className="size-4" /> : <Bot className="size-4" />}
+              </div>
 
-              <button
-                type="button"
-                onClick={() =>
-                  handleSendMessage(
-                    'Inspect the recent logs of failing or restarting containers and identify the root cause.',
-                  )
-                }
-                className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
+              <div
+                className={cn(
+                  'rounded-xl px-3.5 py-2.5 shadow-sm text-xs',
+                  m.role === 'user'
+                    ? 'bg-primary text-primary-foreground font-normal'
+                    : 'bg-card border border-border/60 text-card-foreground flex-1 min-w-0',
+                )}
               >
-                <AlertCircle className="size-4 text-amber-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-medium text-foreground block">Analyze Crash Logs</span>
-                  <span className="text-[11px]">Find OOM, exit codes & stacktraces</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  handleSendMessage(
-                    'Generate an Nginx reverse proxy configuration for domain app.example.com forwarding to port 3000 with WebSocket and SSL Let\'s Encrypt support.',
-                  )
-                }
-                className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
-              >
-                <FileCode2 className="size-4 text-blue-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-medium text-foreground block">Generate Nginx Config</span>
-                  <span className="text-[11px]">Reverse proxy, WebSocket & SSL</span>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  handleSendMessage(
-                    'How do I troubleshoot a 502 Bad Gateway error between Nginx and a Docker container on this server?',
-                  )
-                }
-                className="flex items-start gap-2.5 p-2.5 rounded-lg border border-border/70 bg-card hover:bg-accent/70 hover:border-border transition-all text-xs text-muted-foreground hover:text-foreground group"
-              >
-                <RotateCcw className="size-4 text-purple-500 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-medium text-foreground block">Fix 502 Bad Gateway</span>
-                  <span className="text-[11px]">Network ports, sockets & upstreams</span>
-                </div>
-              </button>
+                {m.role === 'user' ? (
+                  <p className="whitespace-pre-wrap">{m.content}</p>
+                ) : (
+                  <AssistantMessage
+                    content={m.content}
+                    actionFromMeta={m.metadata?.safeguard_action}
+                  />
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          ))}
 
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={cn(
-              'flex gap-2.5 max-w-[92%]',
-              m.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto',
-            )}
+          {/* Live Streaming Content */}
+          {isStreaming && (
+            <div className="flex gap-2.5 max-w-[92%] mr-auto">
+              <div className="size-7 rounded-lg bg-zinc-800 text-primary flex items-center justify-center shrink-0 mt-0.5">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+
+              <div className="rounded-xl px-3.5 py-2.5 shadow-sm text-xs bg-card border border-border/60 text-card-foreground flex-1 min-w-0">
+                {streamingContent ? (
+                  <AssistantMessage
+                    content={streamingContent}
+                    actionFromMeta={pendingAction || undefined}
+                    isStreaming
+                  />
+                ) : (
+                  <div className="flex items-center gap-1.5 text-muted-foreground py-0.5">
+                    <span className="size-1.5 rounded-full bg-primary animate-pulse" />
+                    <span className="size-1.5 rounded-full bg-primary animate-pulse delay-150" />
+                    <span className="size-1.5 rounded-full bg-primary animate-pulse delay-300" />
+                    <span className="text-[11px] ml-1">Analyzing system state...</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Jump to latest button */}
+        {!isAtBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 rounded-full bg-primary/95 text-primary-foreground px-3 py-1 text-xs font-medium shadow-lg backdrop-blur hover:bg-primary transition-all active:scale-95 animate-in fade-in cursor-pointer"
           >
-            <div
-              className={cn(
-                'size-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5',
-                m.role === 'user'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-zinc-800 text-primary',
-              )}
-            >
-              {m.role === 'user' ? <User className="size-4" /> : <Bot className="size-4" />}
-            </div>
-
-            <div
-              className={cn(
-                'rounded-xl px-3.5 py-2.5 shadow-sm text-xs',
-                m.role === 'user'
-                  ? 'bg-primary text-primary-foreground font-normal'
-                  : 'bg-card border border-border/60 text-card-foreground',
-              )}
-            >
-              {m.role === 'user' ? (
-                <p className="whitespace-pre-wrap">{m.content}</p>
-              ) : (
-                renderContentWithSnippets(m.content, m.metadata?.safeguard_action)
-              )}
-            </div>
-          </div>
-        ))}
-
-        {/* Live Streaming Content */}
-        {isStreaming && (
-          <div className="flex gap-2.5 max-w-[92%] mr-auto">
-            <div className="size-7 rounded-lg bg-zinc-800 text-primary flex items-center justify-center shrink-0 mt-0.5">
-              <Loader2 className="size-4 animate-spin" />
-            </div>
-
-            <div className="rounded-xl px-3.5 py-2.5 shadow-sm text-xs bg-card border border-border/60 text-card-foreground">
-              {streamingContent ? (
-                renderContentWithSnippets(streamingContent)
-              ) : (
-                <div className="flex items-center gap-1.5 text-muted-foreground py-0.5">
-                  <span className="size-1.5 rounded-full bg-primary animate-pulse" />
-                  <span className="size-1.5 rounded-full bg-primary animate-pulse delay-150" />
-                  <span className="size-1.5 rounded-full bg-primary animate-pulse delay-300" />
-                  <span className="text-[11px] ml-1">Analyzing system state...</span>
-                </div>
-              )}
-
-              {pendingAction && <SafeguardCard action={pendingAction} />}
-            </div>
-          </div>
+            <ArrowDown className="size-3.5" />
+            <span>{isStreaming ? 'Streaming response...' : 'Jump to latest'}</span>
+          </button>
         )}
       </div>
 

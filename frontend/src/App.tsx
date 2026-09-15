@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router'
 
 import { RequireAuth } from '@/components/RequireAuth'
 import { AppShell } from '@/components/layout/AppShell'
+import { AIPopup } from '@/routes/AIPopup'
 import { AcceptInvite } from '@/routes/AcceptInvite'
 import { DeploymentDetail } from '@/routes/DeploymentDetail'
 import { Deployments } from '@/routes/Deployments'
@@ -30,6 +31,7 @@ export default function App() {
       <Route path="/invite/:token" element={<AcceptInvite />} />
 
       <Route element={<RequireAuth />}>
+        <Route path="/ai-popup" element={<AIPopup />} />
         <Route element={<AppShell />}>
           <Route index element={<Overview />} />
           <Route path="servers" element={<Servers />} />
