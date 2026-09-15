@@ -108,12 +108,12 @@ export function AIAssistant({ serverId, deploymentId }: AIAssistantProps) {
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full border border-primary/30 bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground shadow-xl transition-transform hover:scale-105 active:scale-95 focus-visible:outline-2"
+        className="fixed bottom-20 right-4 sm:bottom-5 sm:right-5 z-40 flex items-center gap-2 rounded-full border border-primary/30 bg-primary px-3.5 py-2.5 text-xs font-semibold text-primary-foreground shadow-xl transition-transform hover:scale-105 active:scale-95 focus-visible:outline-2"
         title="Open AI Assistant (Ctrl+J / Cmd+J)"
       >
         <Sparkles className="size-4 animate-pulse" />
         <span>AI Assistant</span>
-        <kbd className="bg-primary-foreground/20 rounded px-1.5 py-0.5 text-[10px] font-mono">
+        <kbd className="bg-primary-foreground/20 rounded px-1.5 py-0.5 text-[10px] font-mono hidden sm:inline-block">
           ⌘J
         </kbd>
       </button>
@@ -126,7 +126,7 @@ export function AIAssistant({ serverId, deploymentId }: AIAssistantProps) {
       {mode === 'docked' && (
         <aside
           className={cn(
-            'fixed inset-y-0 right-0 z-40 flex flex-col border-l bg-background shadow-2xl transition-all duration-300',
+            'fixed inset-y-0 right-0 z-50 flex flex-col border-l bg-background shadow-2xl transition-all duration-300',
             isMinimized ? 'w-14' : 'w-full sm:w-[440px] md:w-[460px] lg:w-[480px]',
           )}
         >
@@ -193,14 +193,14 @@ export function AIAssistant({ serverId, deploymentId }: AIAssistantProps) {
       {mode === 'floating' && (
         <div
           style={{
-            left: `${position.x}px`,
-            top: `${position.y}px`,
+            left: `${Math.min(Math.max(8, position.x), Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 1000) - 340))}px`,
+            top: `${Math.min(Math.max(8, position.y), Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 800) - 80))}px`,
           }}
           className={cn(
             'fixed z-50 flex flex-col rounded-2xl border border-border/80 bg-background shadow-2xl transition-[width,height] backdrop-blur-md',
             isMinimized
               ? 'w-72 h-12 overflow-hidden'
-              : 'w-[95vw] sm:w-[460px] md:w-[500px] h-[620px] max-h-[90vh]',
+              : 'w-[calc(100vw-1rem)] sm:w-[460px] md:w-[500px] h-[calc(100vh-6rem)] sm:h-[620px] max-h-[85vh]',
           )}
         >
           {/* Draggable Header */}

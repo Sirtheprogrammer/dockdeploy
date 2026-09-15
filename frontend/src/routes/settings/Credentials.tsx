@@ -323,9 +323,9 @@ export function Credentials() {
   const hasServers = (servers.data?.length ?? 0) > 0
 
   return (
-    <div className="grid max-w-4xl gap-4">
+    <div className="grid max-w-4xl min-w-0 gap-4">
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-2">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="space-y-1">
             <CardTitle>Git credentials</CardTitle>
             <CardDescription>
@@ -333,7 +333,7 @@ export function Credentials() {
               AES-256-GCM and are never returned by the API.
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {hasServers ? (
               <Button
                 variant="outline"
@@ -432,7 +432,7 @@ export function Credentials() {
       </Card>
 
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-2">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="space-y-1">
             <CardTitle>Registries</CardTitle>
             <CardDescription>Logins for private container registries.</CardDescription>

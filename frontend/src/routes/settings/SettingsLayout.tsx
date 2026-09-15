@@ -20,27 +20,29 @@ export function SettingsLayout() {
     <>
       <PageHeader title="Settings" description="Your account and this instance." />
 
-      <div className="scrollbar-thin flex items-center gap-1 overflow-x-auto border-b px-4 sm:px-6">
-        {tabs.map(({ to, label, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              cn(
-                '-mb-px border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors',
-                isActive
-                  ? 'border-primary text-foreground'
-                  : 'text-muted-foreground hover:text-foreground border-transparent',
-              )
-            }
-          >
-            {label}
-          </NavLink>
-        ))}
+      <div className="w-full max-w-full border-b">
+        <div className="flex items-center gap-1 overflow-x-auto px-4 sm:px-6 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden scroll-smooth">
+          {tabs.map(({ to, label, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) =>
+                cn(
+                  '-mb-px border-b-2 px-3 sm:px-3.5 py-2.5 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors shrink-0',
+                  isActive
+                    ? 'border-primary text-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground border-transparent',
+                )
+              }
+            >
+              {label}
+            </NavLink>
+          ))}
+        </div>
       </div>
 
-      <div className="p-4 sm:p-6 lg:p-8">
+      <div className="p-4 sm:p-6 lg:p-8 min-w-0 max-w-full">
         <Outlet />
       </div>
     </>

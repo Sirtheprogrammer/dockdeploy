@@ -182,7 +182,7 @@ function UsersTable() {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between gap-2">
+      <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="space-y-1">
           <CardTitle>Users</CardTitle>
           <CardDescription>Everyone with access to this instance.</CardDescription>
@@ -364,7 +364,7 @@ function PendingInvitations() {
 
 export function Users() {
   return (
-    <div className="grid max-w-5xl gap-4">
+    <div className="grid max-w-5xl min-w-0 gap-4">
       <UsersTable />
       <PendingInvitations />
     </div>

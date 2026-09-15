@@ -48,7 +48,7 @@ export function Audit() {
   const { data, isPending, isError, error } = useAudit(limit)
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-5xl min-w-0">
       <Card>
         <CardHeader>
           <CardTitle>Audit log</CardTitle>

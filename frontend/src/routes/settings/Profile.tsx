@@ -354,13 +354,13 @@ function TwoFactorAuthCard() {
                     </div>
                   )}
 
-                  <div className="space-y-2 flex-1 w-full">
+                  <div className="space-y-2 flex-1 w-full min-w-0">
                     <Label className="text-xs">Manual Entry Key</Label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                       <Input
                         readOnly
                         value={setup2FA.data.secret}
-                        className="font-mono text-xs bg-muted/60"
+                        className="font-mono text-xs bg-muted/60 min-w-0 flex-1"
                       />
                       <Button
                         type="button"
@@ -435,7 +435,7 @@ function TwoFactorAuthCard() {
               If you lose your authenticator device, you can use these recovery codes to sign in. Each code can be used only once. Keep them in a safe place, like your password manager.
             </p>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-background p-3 rounded-md border font-mono text-xs text-center select-all">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-background p-2.5 sm:p-3 rounded-md border font-mono text-[11px] sm:text-xs text-center select-all break-all">
               {recoveryCodes.map((code) => (
                 <div key={code} className="p-1.5 bg-muted/40 rounded border border-border/40">
                   {code}
@@ -628,7 +628,7 @@ function SessionsCard() {
 
 export function Profile() {
   return (
-    <div className="grid max-w-3xl gap-4">
+    <div className="grid max-w-3xl min-w-0 gap-4">
       <ProfileCard />
       <PasswordCard />
       <TwoFactorAuthCard />

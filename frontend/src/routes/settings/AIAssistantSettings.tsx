@@ -115,20 +115,20 @@ function AIAssistantSettingsForm({ initialSettings }: { initialSettings: AISetti
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl min-w-0">
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="text-primary size-5" />
-              <CardTitle>LLM Provider & Model</CardTitle>
+          <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles className="text-primary size-5 shrink-0" />
+              <CardTitle className="text-base sm:text-lg">LLM Provider & Model</CardTitle>
             </div>
-            <Badge variant="outline" className="gap-1.5 font-normal">
+            <Badge variant="outline" className="gap-1.5 font-normal text-xs shrink-0">
               <ShieldCheck className="text-emerald-500 size-3.5" />
               AES-256-GCM Encrypted
             </Badge>
           </div>
-          <CardDescription>
+          <CardDescription className="text-xs sm:text-sm">
             Choose OpenAI, Anthropic Claude, DeepSeek, OpenRouter, Google Gemini, or an OpenAI-compatible endpoint.
           </CardDescription>
         </CardHeader>
@@ -184,9 +184,9 @@ function AIAssistantSettingsForm({ initialSettings }: { initialSettings: AISetti
           )}
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1">
               <Label htmlFor="baseUrl">API Base URL</Label>
-              <span className="text-muted-foreground text-xs">
+              <span className="text-muted-foreground text-[11px] sm:text-xs font-mono truncate max-w-full">
                 Default: {preset.defaultBaseUrl}
               </span>
             </div>
@@ -202,10 +202,10 @@ function AIAssistantSettingsForm({ initialSettings }: { initialSettings: AISetti
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-1.5">
               <Label htmlFor="apiKey">API Key / Token</Label>
               {initialSettings.has_api_key && (
-                <Badge variant="success" className="gap-1 text-xs">
+                <Badge variant="success" className="gap-1 text-xs shrink-0">
                   <CheckCircle2 className="size-3" />
                   Key is securely stored
                 </Badge>
@@ -295,13 +295,13 @@ function AIAssistantSettingsForm({ initialSettings }: { initialSettings: AISetti
         </Alert>
       )}
 
-      <div className="flex items-center justify-between gap-3 border-t pt-4">
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3 border-t pt-4">
         <Button
           type="button"
           variant="outline"
           onClick={handleTest}
           disabled={testConn.isPending}
-          className="gap-2"
+          className="w-full sm:w-auto gap-2"
         >
           {testConn.isPending ? (
             <Loader2 className="size-4 animate-spin" />
@@ -311,7 +311,7 @@ function AIAssistantSettingsForm({ initialSettings }: { initialSettings: AISetti
           Test Connection
         </Button>
 
-        <Button type="submit" disabled={update.isPending} className="gap-2">
+        <Button type="submit" disabled={update.isPending} className="w-full sm:w-auto gap-2">
           {update.isPending && <Loader2 className="size-4 animate-spin" />}
           Save Settings
         </Button>

@@ -175,9 +175,9 @@ export function Tokens() {
   const remove = useDeleteToken()
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-4xl min-w-0">
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-2">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="space-y-1">
             <CardTitle>API tokens</CardTitle>
             <CardDescription>
