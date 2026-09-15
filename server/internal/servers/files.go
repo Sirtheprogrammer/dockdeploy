@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,8 +97,72 @@ func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath s
 	}
 	defer conn.Release()
 
+	if conn.IsLocal() {
+		stat, err := os.Stat(cleanPath)
+		if err == nil && !stat.IsDir() {
+			entry := FileEntry{
+				Name:        stat.Name(),
+				Path:        cleanPath,
+				Size:        stat.Size(),
+				Mode:        stat.Mode().String(),
+				IsDir:       false,
+				IsSymlink:   stat.Mode()&os.ModeSymlink != 0,
+				ModTime:     stat.ModTime().UTC(),
+				Permissions: fmt.Sprintf("%04o", stat.Mode().Perm()),
+			}
+			parent := filepath.Dir(cleanPath)
+			return &DirectoryListing{
+				Path:       cleanPath,
+				Parent:     parent,
+				Entries:    []FileEntry{entry},
+				TotalFiles: 1,
+				TotalBytes: stat.Size(),
+			}, nil
+		}
+
+		entries, err := os.ReadDir(cleanPath)
+		if err == nil {
+			parent := filepath.Dir(cleanPath)
+			if cleanPath == "/" {
+				parent = ""
+			}
+			listing := &DirectoryListing{
+				Path:    cleanPath,
+				Parent:  parent,
+				Entries: make([]FileEntry, 0, len(entries)),
+			}
+			for _, de := range entries {
+				fi, err := de.Info()
+				if err != nil {
+					continue
+				}
+				isSym := fi.Mode()&os.ModeSymlink != 0
+				isDir := fi.IsDir()
+				entry := FileEntry{
+					Name:        fi.Name(),
+					Path:        filepath.Join(cleanPath, fi.Name()),
+					Size:        fi.Size(),
+					Mode:        fi.Mode().String(),
+					IsDir:       isDir,
+					IsSymlink:   isSym,
+					ModTime:     fi.ModTime().UTC(),
+					Permissions: fmt.Sprintf("%04o", fi.Mode().Perm()),
+				}
+				if isDir {
+					listing.TotalDirs++
+				} else {
+					listing.TotalFiles++
+					listing.TotalBytes += fi.Size()
+				}
+				listing.Entries = append(listing.Entries, entry)
+			}
+			return listing, nil
+		}
+	}
+
 	// Try SFTP first
-	sftpClient, sftpErr := sftp.NewClient(conn.Client())
+	if conn.Client() != nil {
+		sftpClient, sftpErr := sftp.NewClient(conn.Client())
 	if sftpErr == nil {
 		defer sftpClient.Close()
 
@@ -158,6 +223,7 @@ func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath s
 			}
 			return listing, nil
 		}
+	}
 	}
 
 	// Fallback using shell with sudo for restricted directories like /var/lib/docker/volumes
@@ -246,50 +312,70 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 		return nil, 0, "", err
 	}
 
-	sftpClient, sftpErr := sftp.NewClient(conn.Client())
-	if sftpErr == nil {
-		fi, statErr := sftpClient.Stat(cleanPath)
-		if statErr == nil && !fi.IsDir() {
-			file, openErr := sftpClient.Open(cleanPath)
-			if openErr == nil {
-				reader := &sftpReadCloser{
-					file:   file,
-					client: sftpClient,
-					conn:   conn,
-				}
-				return reader, fi.Size(), fi.Name(), nil
-			}
+	if conn.IsLocal() {
+		f, err := os.Open(cleanPath)
+		if err != nil {
+			conn.Release()
+			return nil, 0, "", err
 		}
-		sftpClient.Close()
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			conn.Release()
+			return nil, 0, "", err
+		}
+		return f, fi.Size(), fi.Name(), nil
 	}
 
-	// Fallback: stream using sudo cat via SSH session
-	session, err := conn.Client().NewSession()
-	if err != nil {
-		conn.Release()
-		return nil, 0, "", fmt.Errorf("ssh session: %w", err)
+	if conn.Client() != nil {
+		sftpClient, sftpErr := sftp.NewClient(conn.Client())
+		if sftpErr == nil {
+			fi, statErr := sftpClient.Stat(cleanPath)
+			if statErr == nil && !fi.IsDir() {
+				file, openErr := sftpClient.Open(cleanPath)
+				if openErr == nil {
+					reader := &sftpReadCloser{
+						file:   file,
+						client: sftpClient,
+						conn:   conn,
+					}
+					return reader, fi.Size(), fi.Name(), nil
+				}
+			}
+			sftpClient.Close()
+		}
+
+		// Fallback: stream using sudo cat via SSH session
+		session, err := conn.Client().NewSession()
+		if err != nil {
+			conn.Release()
+			return nil, 0, "", fmt.Errorf("ssh session: %w", err)
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			session.Close()
+			conn.Release()
+			return nil, 0, "", fmt.Errorf("stdout pipe: %w", err)
+		}
+
+		cmd := fmt.Sprintf(`sudo cat "%s"`, escapeShell(cleanPath))
+		if err := session.Start(cmd); err != nil {
+			session.Close()
+			conn.Release()
+			return nil, 0, "", fmt.Errorf("start cat: %w", err)
+		}
+
+		reader := &execReadCloser{
+			reader:  stdout,
+			session: session,
+			conn:    conn,
+		}
+		return reader, -1, filepath.Base(cleanPath), nil
 	}
 
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		session.Close()
-		conn.Release()
-		return nil, 0, "", fmt.Errorf("stdout pipe: %w", err)
-	}
-
-	cmd := fmt.Sprintf(`sudo cat "%s"`, escapeShell(cleanPath))
-	if err := session.Start(cmd); err != nil {
-		session.Close()
-		conn.Release()
-		return nil, 0, "", fmt.Errorf("start cat: %w", err)
-	}
-
-	reader := &execReadCloser{
-		reader:  stdout,
-		session: session,
-		conn:    conn,
-	}
-	return reader, -1, filepath.Base(cleanPath), nil
+	conn.Release()
+	return nil, 0, "", errors.New("no client available")
 }
 
 // ReadFileContent reads the text content of a file up to maxBytes, detecting whether it's binary.
@@ -313,23 +399,38 @@ func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, raw
 	var perms string
 	var size int64 = -1
 	var buf []byte
-
-	sftpClient, sftpErr := sftp.NewClient(conn.Client())
-	if sftpErr == nil {
-		defer sftpClient.Close()
-		fi, statErr := sftpClient.Stat(cleanPath)
+	if conn.IsLocal() {
+		fi, statErr := os.Stat(cleanPath)
 		if statErr == nil && !fi.IsDir() {
 			if fi.Size() > maxBytes {
 				return nil, fmt.Errorf("file size (%d bytes) exceeds editor limit (%d bytes)", fi.Size(), maxBytes)
 			}
-			f, openErr := sftpClient.Open(cleanPath)
-			if openErr == nil {
-				defer f.Close()
-				buf, err = io.ReadAll(io.LimitReader(f, maxBytes+1))
-				if err == nil {
-					size = fi.Size()
-					modTime = fi.ModTime().UTC()
-					perms = fmt.Sprintf("%04o", fi.Mode().Perm())
+			data, err := os.ReadFile(cleanPath)
+			if err == nil {
+				buf = data
+				size = fi.Size()
+				modTime = fi.ModTime().UTC()
+				perms = fmt.Sprintf("%04o", fi.Mode().Perm())
+			}
+		}
+	} else if conn.Client() != nil {
+		sftpClient, sftpErr := sftp.NewClient(conn.Client())
+		if sftpErr == nil {
+			defer sftpClient.Close()
+			fi, statErr := sftpClient.Stat(cleanPath)
+			if statErr == nil && !fi.IsDir() {
+				if fi.Size() > maxBytes {
+					return nil, fmt.Errorf("file size (%d bytes) exceeds editor limit (%d bytes)", fi.Size(), maxBytes)
+				}
+				f, openErr := sftpClient.Open(cleanPath)
+				if openErr == nil {
+					defer f.Close()
+					buf, err = io.ReadAll(io.LimitReader(f, maxBytes+1))
+					if err == nil {
+						size = fi.Size()
+						modTime = fi.ModTime().UTC()
+						perms = fmt.Sprintf("%04o", fi.Mode().Perm())
+					}
 				}
 			}
 		}
@@ -423,19 +524,6 @@ func (m *Manager) DownloadArchive(ctx context.Context, server *store.Server, raw
 		return nil, "", err
 	}
 
-	session, err := conn.Client().NewSession()
-	if err != nil {
-		conn.Release()
-		return nil, "", fmt.Errorf("ssh session: %w", err)
-	}
-
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		session.Close()
-		conn.Release()
-		return nil, "", fmt.Errorf("stdout pipe: %w", err)
-	}
-
 	parent := filepath.Dir(cleanPath)
 	base := filepath.Base(cleanPath)
 	if cleanPath == "/" {
@@ -443,24 +531,60 @@ func (m *Manager) DownloadArchive(ctx context.Context, server *store.Server, raw
 		base = "."
 	}
 
-	cmd := fmt.Sprintf(`sudo tar -czf - -C "%s" "%s"`, escapeShell(parent), escapeShell(base))
-	if err := session.Start(cmd); err != nil {
-		session.Close()
-		conn.Release()
-		return nil, "", fmt.Errorf("start tar: %w", err)
-	}
-
 	archiveName := base + ".tar.gz"
 	if base == "." {
 		archiveName = server.Name + "_root.tar.gz"
 	}
 
-	reader := &execReadCloser{
-		reader:  stdout,
-		session: session,
-		conn:    conn,
+	if conn.IsLocal() {
+		cmd := exec.CommandContext(ctx, "tar", "-czf", "-", "-C", parent, base)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			conn.Release()
+			return nil, "", fmt.Errorf("tar stdout: %w", err)
+		}
+		if err := cmd.Start(); err != nil {
+			conn.Release()
+			return nil, "", fmt.Errorf("start tar: %w", err)
+		}
+		reader := &localCmdReadCloser{
+			reader: stdout,
+			cmd:    cmd,
+		}
+		return reader, archiveName, nil
 	}
-	return reader, archiveName, nil
+
+	if conn.Client() != nil {
+		session, err := conn.Client().NewSession()
+		if err != nil {
+			conn.Release()
+			return nil, "", fmt.Errorf("ssh session: %w", err)
+		}
+
+		stdout, err := session.StdoutPipe()
+		if err != nil {
+			session.Close()
+			conn.Release()
+			return nil, "", fmt.Errorf("stdout pipe: %w", err)
+		}
+
+		cmd := fmt.Sprintf(`sudo tar -czf - -C "%s" "%s"`, escapeShell(parent), escapeShell(base))
+		if err := session.Start(cmd); err != nil {
+			session.Close()
+			conn.Release()
+			return nil, "", fmt.Errorf("start tar: %w", err)
+		}
+
+		reader := &execReadCloser{
+			reader:  stdout,
+			session: session,
+			conn:    conn,
+		}
+		return reader, archiveName, nil
+	}
+
+	conn.Release()
+	return nil, "", errors.New("no client available")
 }
 
 // UploadFile writes a file from an incoming stream to the target path on the server.
@@ -476,49 +600,69 @@ func (m *Manager) UploadFile(ctx context.Context, server *store.Server, targetPa
 	}
 	defer conn.Release()
 
-	sftpClient, err := sftp.NewClient(conn.Client())
-	if err == nil {
-		defer sftpClient.Close()
+	if conn.IsLocal() {
 		dir := filepath.Dir(cleanPath)
-		_ = sftpClient.MkdirAll(dir)
-
-		f, err := sftpClient.Create(cleanPath)
-		if err == nil {
-			defer f.Close()
-			if mode > 0 {
-				_ = f.Chmod(os.FileMode(mode))
-			}
-			_, copyErr := io.Copy(f, r)
-			return copyErr
+		_ = os.MkdirAll(dir, 0755)
+		perm := os.FileMode(mode)
+		if perm == 0 {
+			perm = 0644
 		}
-	}
-
-	// Sudo tee fallback
-	session, err := conn.Client().NewSession()
-	if err != nil {
-		return fmt.Errorf("ssh session: %w", err)
-	}
-	defer session.Close()
-
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
-	}
-
-	dir := filepath.Dir(cleanPath)
-	cmd := fmt.Sprintf(`sudo mkdir -p "%s" && sudo tee "%s" >/dev/null`, escapeShell(dir), escapeShell(cleanPath))
-	if err := session.Start(cmd); err != nil {
-		return fmt.Errorf("start upload: %w", err)
-	}
-
-	_, copyErr := io.Copy(stdin, r)
-	_ = stdin.Close()
-	waitErr := session.Wait()
-
-	if copyErr != nil {
+		f, err := os.OpenFile(cleanPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, copyErr := io.Copy(f, r)
 		return copyErr
 	}
-	return waitErr
+
+	if conn.Client() != nil {
+		sftpClient, err := sftp.NewClient(conn.Client())
+		if err == nil {
+			defer sftpClient.Close()
+			dir := filepath.Dir(cleanPath)
+			_ = sftpClient.MkdirAll(dir)
+
+			f, err := sftpClient.Create(cleanPath)
+			if err == nil {
+				defer f.Close()
+				if mode > 0 {
+					_ = f.Chmod(os.FileMode(mode))
+				}
+				_, copyErr := io.Copy(f, r)
+				return copyErr
+			}
+		}
+
+		// Sudo tee fallback
+		session, err := conn.Client().NewSession()
+		if err != nil {
+			return fmt.Errorf("ssh session: %w", err)
+		}
+		defer session.Close()
+
+		stdin, err := session.StdinPipe()
+		if err != nil {
+			return fmt.Errorf("stdin pipe: %w", err)
+		}
+
+		dir := filepath.Dir(cleanPath)
+		cmd := fmt.Sprintf(`sudo mkdir -p "%s" && sudo tee "%s" >/dev/null`, escapeShell(dir), escapeShell(cleanPath))
+		if err := session.Start(cmd); err != nil {
+			return fmt.Errorf("start upload: %w", err)
+		}
+
+		_, copyErr := io.Copy(stdin, r)
+		_ = stdin.Close()
+		waitErr := session.Wait()
+
+		if copyErr != nil {
+			return copyErr
+		}
+		return waitErr
+	}
+
+	return errors.New("no client available")
 }
 
 // TransferFiles streams a file or directory from sourceServer directly to targetServer over SSH tar pipe.
@@ -543,6 +687,10 @@ func (m *Manager) TransferFiles(ctx context.Context, srcServer *store.Server, ds
 		return nil, fmt.Errorf("connect target %s: %w", dstServer.Name, err)
 	}
 	defer dstConn.Release()
+
+	if srcConn.Client() == nil || dstConn.Client() == nil {
+		return nil, errors.New("cross-server transfer requires remote SSH on both servers")
+	}
 
 	srcSession, err := srcConn.Client().NewSession()
 	if err != nil {
@@ -679,6 +827,19 @@ func (r *execReadCloser) Close() error {
 	}
 	r.conn.Release()
 	return errors.Join(errs...)
+}
+
+type localCmdReadCloser struct {
+	reader io.Reader
+	cmd    *exec.Cmd
+}
+
+func (r *localCmdReadCloser) Read(p []byte) (int, error) {
+	return r.reader.Read(p)
+}
+
+func (r *localCmdReadCloser) Close() error {
+	return r.cmd.Wait()
 }
 
 func escapeShell(arg string) string {

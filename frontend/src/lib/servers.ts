@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type ApiError } from '@/lib/api'
 
 export type ServerStatus = 'unknown' | 'online' | 'offline' | 'unauthorized'
-export type AuthMethod = 'password' | 'key'
+export type AuthMethod = 'password' | 'key' | 'local'
 export type SudoMode = 'none' | 'nopasswd' | 'password' | 'root'
 export type NginxLayout = '' | 'debian' | 'confd'
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"strconv"
 	"sync"
 	"time"
@@ -68,6 +70,82 @@ func (s *Server) handleServerTerminal(w http.ResponseWriter, r *http.Request) er
 		return nil
 	}
 	defer conn.Release()
+
+	if conn.IsLocal() {
+		shell := "/bin/bash"
+		if _, err := os.Stat(shell); err != nil {
+			shell = "/bin/sh"
+		}
+		cmd := exec.CommandContext(r.Context(), shell)
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return nil
+		}
+		defer stdin.Close()
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return nil
+		}
+
+		if err := cmd.Start(); err != nil {
+			errText := fmt.Sprintf("\r\n\x1b[31;1mdockdeploy:\x1b[0m Failed to spawn local shell: %v\r\n", err)
+			_ = ws.WriteMessage(websocket.TextMessage, []byte(errText))
+			return nil
+		}
+		defer func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+			_ = cmd.Wait()
+		}()
+
+		var wsMu sync.Mutex
+		writeToWs := func(msgType int, data []byte) error {
+			wsMu.Lock()
+			defer wsMu.Unlock()
+			return ws.WriteMessage(msgType, data)
+		}
+
+		forwardStream := func(r io.Reader) {
+			buf := make([]byte, 4096)
+			for {
+				n, err := r.Read(buf)
+				if n > 0 {
+					_ = writeToWs(websocket.TextMessage, buf[:n])
+				}
+				if err != nil {
+					return
+				}
+			}
+		}
+
+		go forwardStream(stdout)
+		go forwardStream(stderr)
+
+		for {
+			msgType, payload, err := ws.ReadMessage()
+			if err != nil {
+				break
+			}
+			if msgType == websocket.TextMessage || msgType == websocket.BinaryMessage {
+				if len(payload) > 0 && payload[0] == '{' {
+					var resize terminalResizeMessage
+					if jsonErr := json.Unmarshal(payload, &resize); jsonErr == nil && resize.Type == "resize" {
+						continue
+					}
+				}
+				if _, err := stdin.Write(payload); err != nil {
+					break
+				}
+			}
+		}
+		return nil
+	}
 
 	sshSession, err := conn.Client().NewSession()
 	if err != nil {

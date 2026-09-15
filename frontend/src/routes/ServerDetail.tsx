@@ -296,7 +296,7 @@ export function ServerDetail() {
                   <dd className="font-mono text-xs">{server.data.docker_socket}</dd>
                   <dt className="text-muted-foreground">Authentication</dt>
                   <dd className="text-xs">
-                    {server.data.auth_method === 'key' ? 'Private key' : 'Password'}
+                    {server.data.auth_method === 'local' ? 'Local Socket (Direct Engine API)' : server.data.auth_method === 'key' ? 'Private key' : 'Password'}
                   </dd>
                 </dl>
               </CardContent>

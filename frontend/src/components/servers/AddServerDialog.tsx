@@ -36,6 +36,8 @@ export function AddServerDialog() {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<Step>('address')
 
+  const [connType, setConnType] = useState<'ssh' | 'local'>('ssh')
+  const [dockerSocket, setDockerSocket] = useState('/var/run/docker.sock')
   const [name, setName] = useState('')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('22')
@@ -55,6 +57,8 @@ export function AddServerDialog() {
 
   function reset() {
     setStep('address')
+    setConnType('ssh')
+    setDockerSocket('/var/run/docker.sock')
     setName('')
     setHost('')
     setPort('22')
@@ -69,6 +73,27 @@ export function AddServerDialog() {
     setInstallDockerOpen(false)
     probe.reset()
     create.reset()
+  }
+
+  function onConnectLocal(event: FormEvent) {
+    event.preventDefault()
+    create.mutate(
+      {
+        name: name.trim() || 'Local Docker',
+        host: 'localhost',
+        port: 0,
+        username: 'local',
+        auth_method: 'local',
+        docker_socket: dockerSocket.trim() || '/var/run/docker.sock',
+        host_key_fingerprint: 'local',
+      },
+      {
+        onSuccess: (created) => {
+          setResult(created)
+          setStep('result')
+        },
+      },
+    )
   }
 
   function onLookup(event: FormEvent) {
@@ -130,53 +155,127 @@ export function AddServerDialog() {
 
       <DialogContent className="max-w-xl">
         {step === 'address' ? (
-          <form onSubmit={onLookup} noValidate className="grid gap-4">
+          <div className="grid gap-4">
             <DialogHeader>
               <DialogTitle>Add a server</DialogTitle>
               <DialogDescription>
-                Nothing is installed on the machine. dockdeploy connects over SSH and talks to the
-                Docker daemon that is already there.
+                Connect to a remote server over SSH, or manage your local Docker daemon directly.
               </DialogDescription>
             </DialogHeader>
 
-            {probe.error && Object.keys(lookupErrors).length === 0 ? (
-              <Alert variant="danger">{probe.error.message}</Alert>
-            ) : null}
-
-            <div className="grid gap-4 sm:grid-cols-[1fr_7rem]">
-              <div className="space-y-1.5">
-                <Label htmlFor="server-host">Host</Label>
-                <Input
-                  id="server-host"
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  placeholder="192.0.2.10 or deploy.example.com"
-                  required
-                  autoFocus
-                  aria-invalid={Boolean(lookupErrors.host)}
-                />
-                <FieldError message={lookupErrors.host} />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="server-port">SSH port</Label>
-                <Input
-                  id="server-port"
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
-                  inputMode="numeric"
-                  aria-invalid={Boolean(lookupErrors.port)}
-                />
-                <FieldError message={lookupErrors.port} />
-              </div>
+            <div className="bg-muted flex rounded-lg p-1 text-sm font-medium">
+              <button
+                type="button"
+                onClick={() => setConnType('ssh')}
+                className={cn(
+                  'flex-1 rounded-md py-1.5 transition-colors',
+                  connType === 'ssh'
+                    ? 'bg-background text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Remote Server (SSH)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConnType('local')
+                  if (!name) setName('Local Docker')
+                }}
+                className={cn(
+                  'flex-1 rounded-md py-1.5 transition-colors',
+                  connType === 'local'
+                    ? 'bg-background text-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Local Docker (Zero SSH)
+              </button>
             </div>
 
-            <DialogFooter>
-              <Button type="submit" disabled={probe.isPending || !host.trim()}>
-                {probe.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
-                Continue
-              </Button>
-            </DialogFooter>
-          </form>
+            {connType === 'local' ? (
+              <form onSubmit={onConnectLocal} noValidate className="grid gap-4">
+                {createFormError ? <Alert variant="danger">{createFormError}</Alert> : null}
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="local-server-name">Server name</Label>
+                  <Input
+                    id="local-server-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Local Docker"
+                    required
+                    autoFocus
+                    aria-invalid={Boolean(createErrors.name)}
+                  />
+                  <FieldError message={createErrors.name} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="local-docker-socket">Docker socket path</Label>
+                  <Input
+                    id="local-docker-socket"
+                    value={dockerSocket}
+                    onChange={(e) => setDockerSocket(e.target.value)}
+                    placeholder="/var/run/docker.sock"
+                    required
+                    aria-invalid={Boolean(createErrors.docker_socket)}
+                  />
+                  <FieldError message={createErrors.docker_socket} />
+                  <p className="text-muted-foreground text-xs">
+                    Connects directly to your local Docker engine via Unix domain socket without needing an SSH server or credentials.
+                  </p>
+                </div>
+
+                <DialogFooter>
+                  <Button type="submit" disabled={create.isPending || !name.trim()}>
+                    {create.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                    Connect Local Docker
+                  </Button>
+                </DialogFooter>
+              </form>
+            ) : (
+              <form onSubmit={onLookup} noValidate className="grid gap-4">
+                {probe.error && Object.keys(lookupErrors).length === 0 ? (
+                  <Alert variant="danger">{probe.error.message}</Alert>
+                ) : null}
+
+                <div className="grid gap-4 sm:grid-cols-[1fr_7rem]">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="server-host">Host</Label>
+                    <Input
+                      id="server-host"
+                      value={host}
+                      onChange={(e) => setHost(e.target.value)}
+                      placeholder="192.0.2.10 or deploy.example.com"
+                      required
+                      autoFocus
+                      aria-invalid={Boolean(lookupErrors.host)}
+                    />
+                    <FieldError message={lookupErrors.host} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="server-port">SSH port</Label>
+                    <Input
+                      id="server-port"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      inputMode="numeric"
+                      aria-invalid={Boolean(lookupErrors.port)}
+                    />
+                    <FieldError message={lookupErrors.port} />
+                  </div>
+                </div>
+
+                <DialogFooter>
+                  <Button type="submit" disabled={probe.isPending || !host.trim()}>
+                    {probe.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                    Continue
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
+          </div>
         ) : null}
 
         {step === 'verify' ? (

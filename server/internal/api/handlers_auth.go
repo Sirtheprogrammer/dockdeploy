@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/sshx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
 
@@ -94,6 +96,33 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) error {
 	AuditResource(r.Context(), "users", user.ID)
 	AuditMeta(r.Context(), "event", "first_admin_created")
 	s.Log.Info("first administrator created", "email", user.Email)
+
+	// In local zero-dependency mode, auto-detect local Docker socket and register local server.
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		localServer, err := s.Store.CreateServer(r.Context(), s.Sealer, store.NewServer{
+			Name:               "Local Docker",
+			Host:               "localhost",
+			Port:               0,
+			Username:           "local",
+			AuthMethod:         sshx.AuthLocal,
+			HostKeyFingerprint: "local",
+			DockerSocket:       "/var/run/docker.sock",
+			CreatedBy:          user.ID,
+		})
+		if err == nil {
+			s.Log.Info("auto-registered local Docker server", "id", localServer.ID)
+			if caps, probeErr := s.Servers.Probe(r.Context(), localServer); probeErr == nil {
+				s.Log.Info("local Docker probe successful", "docker_version", caps.DockerVersion)
+				if s.Discovery != nil {
+					go func() {
+						discCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						defer cancel()
+						_, _ = s.Discovery.DiscoverServer(discCtx, localServer, user.ID)
+					}()
+				}
+			}
+		}
+	}
 
 	return s.startSession(w, r, user, http.StatusCreated)
 }

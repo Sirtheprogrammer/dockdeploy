@@ -23,11 +23,47 @@ All planned milestones are complete and verified:
 
 ## Running It
 
-dockdeploy supports two running modes:
-1. **Embedded SQLite (Zero Dependencies / Default)**: If `DATABASE_URL` is omitted or empty, dockdeploy automatically runs using a pure-Go embedded SQLite database (default: `dockdeploy.db` or `SQLITE_PATH`) with zero CGO dependencies.
-2. **PostgreSQL**: Set `DATABASE_URL=postgres://...` to use an external or containerized PostgreSQL instance.
+dockdeploy can be run as a **100% self-contained single binary with zero external dependencies**, or in Docker with SQLite / PostgreSQL.
 
-### Running with Docker Compose (SQLite Default)
+### 1. Standalone Single Binary (Zero-Dependency Local Mode)
+
+You can run dockdeploy locally with a single command—no database, no Node.js, and no SSH setup required. The compiled binary embeds the complete React dashboard SPA, runs a pure-Go SQLite database, and auto-provisions encryption keys.
+
+```sh
+./dockdeploy
+```
+
+When started:
+- **Zero Configuration**: If `APP_ENCRYPTION_KEY` and `SESSION_SECRET` are not set, dockdeploy automatically generates cryptographic 256-bit keys and saves them to `dockdeploy.db.key` with restricted permissions (`0600`).
+- **Embedded Database**: Automatically creates and manages SQLite schema in `dockdeploy.db` (no CGO needed).
+- **Embedded Frontend**: Serves the bundled React SPA directly from binary memory at <http://localhost:8081>.
+- **Local Docker Engine**: On first-run setup, dockdeploy automatically detects `/var/run/docker.sock` and connects directly via Unix domain socket—no SSH server, ports, or credentials needed!
+
+#### CLI Options
+```sh
+./dockdeploy -port 8080 -db /path/to/dockdeploy.db
+```
+- `-port <port>`: Port to listen on (default: `8081` or `$PORT`).
+- `-db <path>`: Path to SQLite database file (default: `dockdeploy.db` or `$SQLITE_PATH`).
+- `-version`, `-v`: Print version information and exit.
+
+#### Building the Single Binary from Source
+
+To compile the single standalone binary yourself:
+
+```sh
+# Using the build script:
+./build.sh
+
+# Or using Make:
+make build
+```
+
+This compiles the frontend assets with Vite, embeds them directly into Go via `//go:embed`, and builds a statically linked binary (`./dockdeploy`).
+
+---
+
+### 2. Running with Docker Compose (SQLite Default)
 
 ```sh
 cp .env.example .env
@@ -39,21 +75,23 @@ docker compose up -d --build
 
 dockdeploy automatically boots with embedded SQLite persisted to the `dockdeploy-data` volume. No separate database container is required. (To use PostgreSQL instead, set `DATABASE_URL=postgres://...` in `.env`).
 
-### Running Standalone with SQLite
+---
+
+### 3. Running with PostgreSQL
+
+If you prefer external or distributed PostgreSQL:
 
 ```sh
-export APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
-export SESSION_SECRET=$(openssl rand -base64 32)
-# DATABASE_URL is not set: dockdeploy uses embedded SQLite automatically!
-./server/cmd/dockdeploy/dockdeploy
+export DATABASE_URL="postgres://user:password@localhost:5432/dockdeploy?sslmode=disable"
+export APP_ENCRYPTION_KEY="<your-32-byte-base64-key>"
+export SESSION_SECRET="<your-32-byte-base64-secret>"
+./dockdeploy
 ```
 
-The dashboard is served on <http://localhost:8081>. The database schema automatically migrates itself on startup (both SQLite and PostgreSQL).
+The database schema automatically migrates itself on startup for both SQLite and PostgreSQL.
 
 > [!IMPORTANT]
-> `APP_ENCRYPTION_KEY` seals every credential the platform stores (SSH private keys, passwords, registry credentials, env secrets, and webhook secrets). **Back it up immediately.** If lost, stored secrets cannot be decrypted and must be re-entered.
-
-By default, the container binds to `127.0.0.1:8081`. Put a reverse proxy with TLS in front of it before exposing it to the internet.
+> `APP_ENCRYPTION_KEY` seals every credential the platform stores (SSH private keys, passwords, registry credentials, env secrets, and webhook secrets). In standalone mode, it is safely stored in `dockdeploy.db.key`. **Back up this key.** If lost, stored secrets cannot be decrypted and must be re-entered.
 
 ---
 

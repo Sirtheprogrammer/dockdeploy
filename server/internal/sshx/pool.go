@@ -41,6 +41,10 @@ func NewPool(log *slog.Logger) *Pool {
 // changing a server's address or credentials evicts the old connection rather
 // than silently reusing it.
 func (p *Pool) Get(ctx context.Context, key string, target Target, cred Credential) (*Conn, error) {
+	if cred.Method == AuthLocal {
+		return &Conn{isLocal: true, pool: p, key: key}, nil
+	}
+
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()

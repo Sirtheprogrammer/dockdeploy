@@ -142,8 +142,12 @@ func (s *Store) CreateServer(ctx context.Context, sealer Sealer, in NewServer) (
 			socket = "/var/run/docker.sock"
 		}
 		port := in.Port
-		if port == 0 {
+		if port == 0 && in.AuthMethod != sshx.AuthLocal {
 			port = 22
+		}
+		fingerprint := in.HostKeyFingerprint
+		if fingerprint == "" && in.AuthMethod == sshx.AuthLocal {
+			fingerprint = "local"
 		}
 
 		rows, err := tx.Query(ctx, `
@@ -154,7 +158,7 @@ func (s *Store) CreateServer(ctx context.Context, sealer Sealer, in NewServer) (
 			RETURNING `+serverColumns,
 			in.Name, in.Host, port, in.Username, in.AuthMethod,
 			secretID, passphraseID, sudoID,
-			in.HostKeyFingerprint, socket, nullable(in.CreatedBy))
+			fingerprint, socket, nullable(in.CreatedBy))
 		if err != nil {
 			return wrap("store: create server", err)
 		}
@@ -256,6 +260,8 @@ func (s *Store) ServerCredential(ctx context.Context, sealer Sealer, server *Ser
 		if out.Credential.Passphrase, err = s.openSecret(ctx, sealer, server.PassphraseSecretID); err != nil {
 			return nil, err
 		}
+	case sshx.AuthLocal:
+		// Local direct connection
 	}
 
 	if out.SudoPassword, err = s.openSecret(ctx, sealer, server.SudoPasswordSecretID); err != nil {

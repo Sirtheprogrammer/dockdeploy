@@ -955,8 +955,12 @@ func (s *sqliteStore) CreateServer(ctx context.Context, sealer Sealer, in NewSer
 			socket = "/var/run/docker.sock"
 		}
 		port := in.Port
-		if port == 0 {
+		if port == 0 && in.AuthMethod != sshx.AuthLocal {
 			port = 22
+		}
+		fingerprint := in.HostKeyFingerprint
+		if fingerprint == "" && in.AuthMethod == sshx.AuthLocal {
+			fingerprint = "local"
 		}
 
 		id := newUUID()
@@ -971,7 +975,7 @@ func (s *sqliteStore) CreateServer(ctx context.Context, sealer Sealer, in NewSer
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'unknown', '', '{}', $12, $13, $13)`,
 			id, in.Name, in.Host, port, in.Username, in.AuthMethod,
 			secretID, passphraseID, sudoID,
-			in.HostKeyFingerprint, socket, nullable(in.CreatedBy), now)
+			fingerprint, socket, nullable(in.CreatedBy), now)
 		if err != nil {
 			return wrapSQLite("store: create server", err)
 		}
@@ -986,7 +990,7 @@ func (s *sqliteStore) CreateServer(ctx context.Context, sealer Sealer, in NewSer
 			SecretID:             secretID,
 			PassphraseSecretID:   passphraseID,
 			SudoPasswordSecretID: sudoID,
-			HostKeyFingerprint:   in.HostKeyFingerprint,
+			HostKeyFingerprint:   fingerprint,
 			DockerSocket:         socket,
 			Status:               ServerUnknown,
 			Capabilities:         json.RawMessage("{}"),
@@ -1066,6 +1070,8 @@ func (s *sqliteStore) ServerCredential(ctx context.Context, sealer Sealer, serve
 		if out.Credential.Passphrase, err = s.openSecret(ctx, sealer, server.PassphraseSecretID); err != nil {
 			return nil, err
 		}
+	case sshx.AuthLocal:
+		// Local direct connection
 	}
 
 	if out.SudoPassword, err = s.openSecret(ctx, sealer, server.SudoPasswordSecretID); err != nil {

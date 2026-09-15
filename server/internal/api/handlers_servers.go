@@ -101,14 +101,26 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) erro
 	}
 
 	f := fields{}
+	method := sshx.AuthMethod(req.AuthMethod)
+	if !method.Valid() {
+		f.add("auth_method", "Choose password, key, or local authentication.")
+	}
+	if method == sshx.AuthLocal {
+		if req.Host == "" {
+			req.Host = "localhost"
+		}
+		if req.Username == "" {
+			req.Username = "local"
+		}
+		if req.HostKeyFingerprint == "" {
+			req.HostKeyFingerprint = "local"
+		}
+	}
+
 	name := f.required("name", req.Name, 1, 100)
 	host := f.required("host", req.Host, 1, 255)
 	username := f.required("username", req.Username, 1, 64)
 
-	method := sshx.AuthMethod(req.AuthMethod)
-	if !method.Valid() {
-		f.add("auth_method", "Choose either password or key authentication.")
-	}
 	switch method {
 	case sshx.AuthPassword:
 		if req.Password == "" {
@@ -118,12 +130,14 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) erro
 		if strings.TrimSpace(req.PrivateKey) == "" {
 			f.add("private_key", "A private key is required for key authentication.")
 		}
+	case sshx.AuthLocal:
+		// No credentials needed for local socket
 	}
 
 	if req.Port < 0 || req.Port > 65535 {
-		f.add("port", "Port must be between 1 and 65535.")
+		f.add("port", "Port must be between 0 and 65535.")
 	}
-	if strings.TrimSpace(req.HostKeyFingerprint) == "" {
+	if strings.TrimSpace(req.HostKeyFingerprint) == "" && method != sshx.AuthLocal {
 		f.add("host_key_fingerprint", "Confirm the host key fingerprint before adding this server.")
 	}
 	if err := f.err(); err != nil {

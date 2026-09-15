@@ -1,3 +1,17 @@
 .env
 *.local
 plan.md
+
+# Compiled binaries
+/dockdeploy
+/server/cmd/dockdeploy/dockdeploy
+
+# SQLite databases & keys
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.db.key
+
+# Node / Frontend build artifacts
+node_modules/

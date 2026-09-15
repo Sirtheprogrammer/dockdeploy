@@ -42,9 +42,10 @@ type AuthMethod string
 const (
 	AuthPassword AuthMethod = "password"
 	AuthKey      AuthMethod = "key"
+	AuthLocal    AuthMethod = "local"
 )
 
-func (a AuthMethod) Valid() bool { return a == AuthPassword || a == AuthKey }
+func (a AuthMethod) Valid() bool { return a == AuthPassword || a == AuthKey || a == AuthLocal }
 
 // Credential carries the secret material for one connection. It is built from
 // decrypted values at the moment of use and never stored in this form.
@@ -68,6 +69,9 @@ type Target struct {
 }
 
 func (t Target) Address() string {
+	if (t.Host == "localhost" || t.Host == "local" || t.Host == "127.0.0.1") && t.Port == 0 {
+		return "localhost"
+	}
 	port := t.Port
 	if port == 0 {
 		port = 22
@@ -88,6 +92,9 @@ const (
 // That ordering is the whole point: the user approves the identity first, and
 // only then does the platform send a password or key to it.
 func Fingerprint(ctx context.Context, host string, port int) (fingerprint, keyType string, err error) {
+	if (host == "localhost" || host == "local" || host == "127.0.0.1") && (port == 0 || port == 22) {
+		return "local", "local", nil
+	}
 	target := Target{Host: host, Port: port}
 
 	var captured ssh.PublicKey

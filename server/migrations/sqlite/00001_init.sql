@@ -110,8 +110,8 @@ CREATE TABLE servers (
     updated_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT servers_name_not_empty CHECK (name <> ''),
     CONSTRAINT servers_host_not_empty CHECK (host <> ''),
-    CONSTRAINT servers_port_range CHECK (port BETWEEN 1 AND 65535),
-    CONSTRAINT servers_auth_method_valid CHECK (auth_method IN ('password', 'key')),
+    CONSTRAINT servers_port_range CHECK (port BETWEEN 0 AND 65535),
+    CONSTRAINT servers_auth_method_valid CHECK (auth_method IN ('password', 'key', 'local')),
     CONSTRAINT servers_fingerprint_present CHECK (host_key_fingerprint <> ''),
     CONSTRAINT servers_status_valid CHECK (status IN ('unknown', 'online', 'offline', 'unauthorized'))
 );
