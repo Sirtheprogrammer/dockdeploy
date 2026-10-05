@@ -37,6 +37,7 @@ import {
   useDeleteAIConversation,
   type AIMessage,
   type SafeguardAction,
+  isLocalAIProvider,
 } from '@/lib/ai'
 import { useDeployments } from '@/lib/deployments'
 import { useServers } from '@/lib/servers'
@@ -144,7 +145,7 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
     const textToSend = overridePrompt || inputPrompt
     if (!textToSend.trim() || isStreaming) return
 
-    if (!settings?.has_api_key && settings?.provider !== 'custom') {
+    if (!settings?.has_api_key && !isLocalAIProvider(settings?.provider || '')) {
       toast.error(
         'Please configure an API key in Settings -> AI Assistant before using the assistant.',
       )

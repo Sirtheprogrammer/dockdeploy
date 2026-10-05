@@ -24,6 +24,51 @@ var terminalUpgrader = websocket.Upgrader{
 	},
 }
 
+// Ping interval and pong wait for the terminal WebSocket itself. This is
+// independent of the SSH-level keepalive in sshx: its purpose is to keep
+// traffic flowing across any reverse proxy, load balancer, or NAT device
+// sitting in front of this server, which will silently drop an idle
+// WebSocket once its own idle timeout elapses (commonly 60-100s) even
+// though neither this server nor the SSH connection ever timed out it.
+// No read deadline is set until the first ping goes out, so a session with
+// an operator actively typing never times out; after that, failing to see
+// a pong within pongWait means the peer is gone and the session is torn
+// down rather than left to hang forever.
+const (
+	terminalPingInterval = 25 * time.Second
+	terminalPongWait     = 60 * time.Second
+)
+
+// startTerminalKeepalive pings the WebSocket on a timer and arms a read
+// deadline that only pong frames (and the ping ack built into gorilla's
+// pong handler) push forward. Call the returned stop function when the
+// session ends to release the goroutine.
+func startTerminalKeepalive(ws *websocket.Conn, wsMu *sync.Mutex) (stop func()) {
+	ws.SetPongHandler(func(string) error {
+		return ws.SetReadDeadline(time.Now().Add(terminalPongWait))
+	})
+
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(terminalPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				wsMu.Lock()
+				err := ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				wsMu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
 type terminalResizeMessage struct {
 	Type string `json:"type"`
 	Cols uint32 `json:"cols"`
@@ -105,6 +150,9 @@ func (s *Server) handleServerTerminal(w http.ResponseWriter, r *http.Request) er
 		}()
 
 		var wsMu sync.Mutex
+		stopKeepalive := startTerminalKeepalive(ws, &wsMu)
+		defer stopKeepalive()
+
 		writeToWs := func(msgType int, data []byte) error {
 			wsMu.Lock()
 			defer wsMu.Unlock()
@@ -203,6 +251,8 @@ func (s *Server) handleServerTerminal(w http.ResponseWriter, r *http.Request) er
 	}
 
 	var wsMu sync.Mutex
+	stopKeepalive := startTerminalKeepalive(ws, &wsMu)
+
 	writeToWs := func(msgType int, data []byte) error {
 		wsMu.Lock()
 		defer wsMu.Unlock()
@@ -212,6 +262,7 @@ func (s *Server) handleServerTerminal(w http.ResponseWriter, r *http.Request) er
 	closeOnce := sync.Once{}
 	closeAll := func() {
 		closeOnce.Do(func() {
+			stopKeepalive()
 			_ = sshSession.Close()
 			_ = ws.Close()
 		})

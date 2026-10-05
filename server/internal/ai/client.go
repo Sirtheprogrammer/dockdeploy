@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -43,6 +44,20 @@ func NewClient() *Client {
 func normalizeProvider(provider string) string {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	switch p {
+	case "ollama":
+		return "ollama"
+	case "antigravity", "agy":
+		return "antigravity"
+	case "claude-code", "claude_code", "claude_cli":
+		return "claude-code"
+	case "hermes", "hermes-agent":
+		return "hermes"
+	case "copilot", "github-copilot":
+		return "copilot"
+	case "lmstudio":
+		return "lmstudio"
+	case "localai":
+		return "localai"
 	case "claude", "anthropic":
 		return "anthropic"
 	case "deepseek":
@@ -58,8 +73,44 @@ func normalizeProvider(provider string) string {
 	}
 }
 
+// IsLocalProvider returns true if the provider can run locally without requiring external API keys.
+func IsLocalProvider(provider string) bool {
+	p := normalizeProvider(provider)
+	switch p {
+	case "ollama", "antigravity", "claude-code", "hermes", "copilot", "lmstudio", "localai", "custom":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsCLIProvider returns true if the provider is executed as a local agent CLI command.
+func IsCLIProvider(provider string) bool {
+	p := normalizeProvider(provider)
+	switch p {
+	case "antigravity", "claude-code", "hermes", "copilot":
+		return true
+	default:
+		return false
+	}
+}
+
 func defaultBaseURL(provider string) string {
 	switch normalizeProvider(provider) {
+	case "ollama":
+		return "http://localhost:11434/v1"
+	case "lmstudio":
+		return "http://localhost:1234/v1"
+	case "localai":
+		return "http://localhost:8080/v1"
+	case "antigravity":
+		return "local://agy"
+	case "claude-code":
+		return "local://claude"
+	case "hermes":
+		return "local://hermes"
+	case "copilot":
+		return "local://copilot"
 	case "anthropic":
 		return "https://api.anthropic.com/v1"
 	case "deepseek":
@@ -77,6 +128,18 @@ func defaultBaseURL(provider string) string {
 
 func defaultModel(provider string) string {
 	switch normalizeProvider(provider) {
+	case "ollama":
+		return "gemma3:1b"
+	case "antigravity":
+		return "agy-default"
+	case "claude-code":
+		return "claude-code"
+	case "hermes":
+		return "hermes-agent"
+	case "copilot":
+		return "copilot-cli"
+	case "lmstudio", "localai":
+		return "default"
 	case "anthropic":
 		return "claude-3-7-sonnet-20250219"
 	case "deepseek":
@@ -92,8 +155,31 @@ func defaultModel(provider string) string {
 	}
 }
 
-// TestConnection verifies that the API key and model work by issuing a small single-token test request.
+// TestConnection verifies that the API key and model work by issuing a test request or probing the local agent.
 func (c *Client) TestConnection(ctx context.Context, opts StreamOptions) (string, error) {
+	p := normalizeProvider(opts.Provider)
+	if IsCLIProvider(p) {
+		var binName string
+		switch p {
+		case "antigravity":
+			binName = "agy"
+		case "claude-code":
+			binName = "claude"
+		case "hermes":
+			binName = "hermes"
+		case "copilot":
+			binName = "copilot"
+		}
+		path := findBinary(binName)
+		if path == "" && p == "copilot" {
+			path = findBinary("github-copilot-cli")
+		}
+		if path == "" {
+			return "", fmt.Errorf("local agent CLI '%s' not found on PATH", binName)
+		}
+		return fmt.Sprintf("Local CLI agent '%s' ready at %s", p, path), nil
+	}
+
 	opts.Messages = []ChatMessage{
 		{Role: "user", Content: "Reply with the exact word 'READY' and nothing else."},
 	}
@@ -129,10 +215,115 @@ func (c *Client) StreamCompletion(ctx context.Context, opts StreamOptions, onChu
 		opts.Temperature = 0.7
 	}
 
+	if IsCLIProvider(p) {
+		return c.streamCLIAgent(ctx, p, opts, onChunk)
+	}
 	if p == "anthropic" {
 		return c.streamAnthropic(ctx, baseURL, model, opts, onChunk)
 	}
 	return c.streamOpenAICompatible(ctx, baseURL, model, opts, onChunk)
+}
+
+// streamCLIAgent executes a local CLI agent directly (Antigravity, Claude Code, Hermes, Copilot).
+func (c *Client) streamCLIAgent(
+	ctx context.Context,
+	provider string,
+	opts StreamOptions,
+	onChunk func(chunk string) error,
+) error {
+	var sb strings.Builder
+	if opts.SystemPrompt != "" {
+		sb.WriteString("=== SYSTEM INSTRUCTIONS ===\n")
+		sb.WriteString(opts.SystemPrompt)
+		sb.WriteString("\n\n")
+	}
+	if len(opts.Messages) > 0 {
+		sb.WriteString("=== CONVERSATION HISTORY ===\n")
+		for _, m := range opts.Messages {
+			sb.WriteString(fmt.Sprintf("%s: %s\n\n", strings.ToUpper(m.Role), m.Content))
+		}
+	}
+	prompt := strings.TrimSpace(sb.String())
+
+	var cmdName string
+	var args []string
+
+	switch provider {
+	case "antigravity":
+		cmdName = findBinary("agy")
+		if cmdName == "" {
+			return fmt.Errorf("ai: antigravity CLI ('agy') not found on system")
+		}
+		args = []string{"-p", prompt, "--print-timeout", "3m", "--dangerously-skip-permissions"}
+
+	case "claude-code":
+		cmdName = findBinary("claude")
+		if cmdName == "" {
+			return fmt.Errorf("ai: claude code CLI ('claude') not found on system")
+		}
+		args = []string{"-p", prompt}
+
+	case "hermes":
+		cmdName = findBinary("hermes")
+		if cmdName == "" {
+			return fmt.Errorf("ai: hermes CLI ('hermes') not found on system")
+		}
+		args = []string{"chat", "-q", prompt, "-Q"}
+		if opts.Model != "" && opts.Model != "default" && opts.Model != "hermes-agent" {
+			args = append(args, "-m", opts.Model)
+		}
+
+	case "copilot":
+		cmdName = findBinary("copilot")
+		if cmdName == "" {
+			cmdName = findBinary("github-copilot-cli")
+		}
+		if cmdName == "" {
+			return fmt.Errorf("ai: github copilot CLI not found on system")
+		}
+		args = []string{"-p", prompt}
+
+	default:
+		return fmt.Errorf("ai: unsupported CLI agent '%s'", provider)
+	}
+
+	execCmd := exec.CommandContext(ctx, cmdName, args...)
+	stdout, err := execCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("ai: create stdout pipe: %w", err)
+	}
+
+	if err := execCmd.Start(); err != nil {
+		return fmt.Errorf("ai: start %s: %w", cmdName, err)
+	}
+
+	reader := bufio.NewReader(stdout)
+	buf := make([]byte, 1024)
+	for {
+		n, rErr := reader.Read(buf)
+		if n > 0 {
+			chunk := string(buf[:n])
+			if cErr := onChunk(chunk); cErr != nil {
+				_ = execCmd.Process.Kill()
+				return cErr
+			}
+		}
+		if rErr != nil {
+			if errors.Is(rErr, io.EOF) {
+				break
+			}
+			return rErr
+		}
+	}
+
+	if err := execCmd.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("ai: %s exited with error: %w", cmdName, err)
+	}
+
+	return nil
 }
 
 // streamOpenAICompatible handles OpenAI, DeepSeek, OpenRouter, Gemini, and Custom OpenAI endpoints.

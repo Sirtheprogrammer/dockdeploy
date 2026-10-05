@@ -26,7 +26,35 @@ func (s *Server) handleGetAISettings(w http.ResponseWriter, r *http.Request) err
 	if err != nil {
 		return Internal(err)
 	}
+
+	// If no API key configured and provider is default "openai", auto-suggest local agent if available
+	if !settings.HasAPIKey && (settings.Provider == "openai" || settings.Provider == "") {
+		detectCtx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
+		defer cancel()
+		detectResult := ai.DetectAgents(detectCtx)
+		if detectResult.HasLocalAgents && detectResult.RecommendedID != "" {
+			for _, a := range detectResult.Agents {
+				if a.ID == detectResult.RecommendedID && a.Available {
+					settings.Provider = a.ID
+					settings.Model = a.DefaultModel
+					if a.Endpoint != "" {
+						settings.BaseURL = a.Endpoint
+					}
+					break
+				}
+			}
+		}
+	}
+
 	return JSON(w, s.Log, http.StatusOK, settings)
+}
+
+func (s *Server) handleDetectLocalAgents(w http.ResponseWriter, r *http.Request) error {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	result := ai.DetectAgents(ctx)
+	return JSON(w, s.Log, http.StatusOK, result)
 }
 
 type updateAISettingsRequest struct {
@@ -95,7 +123,7 @@ func (s *Server) handleTestAIConnection(w http.ResponseWriter, r *http.Request) 
 		apiKey = storedKey
 	}
 
-	if apiKey == "" && strings.ToLower(req.Provider) != "custom" {
+	if apiKey == "" && !ai.IsLocalProvider(req.Provider) {
 		return BadRequest("No API key provided. Please enter an API key or save one in settings first.")
 	}
 
@@ -248,7 +276,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) error {
 		return Internal(err)
 	}
 
-	if apiKey == "" && settings.Provider != "custom" {
+	if apiKey == "" && !ai.IsLocalProvider(settings.Provider) {
 		return BadRequest("No API key configured for provider '%s'. Please set one in Settings -> AI Assistant.", settings.Provider)
 	}
 
@@ -396,3 +424,12 @@ func (s *Server) handleAIDiagnoseServer(w http.ResponseWriter, r *http.Request) 
 
 	return JSON(w, s.Log, http.StatusOK, diag)
 }
+
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) error {
+	if s.MCP == nil {
+		return Unavailable("MCP server is not configured or enabled on this instance.")
+	}
+	s.MCP.HTTPHandler().ServeHTTP(w, r)
+	return nil
+}
+

@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { AlertCircle, Maximize2, Minimize2, RefreshCw, Terminal as TermIcon, Trash2 } from 'lucide-react'
+import { AlertCircle, GripHorizontal, Maximize2, Minimize2, RefreshCw, Terminal as TermIcon, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -10,17 +10,31 @@ import { cn } from '@/lib/utils'
 
 interface ServerTerminalProps {
   server: Server
-  isFullscreen?: boolean
-  onToggleFullscreen?: () => void
   onClose?: () => void
 }
 
-export function ServerTerminal({
-  server,
-  isFullscreen: controlledFullscreen,
-  onToggleFullscreen,
-  onClose,
-}: ServerTerminalProps) {
+const POS_KEY = 'dockdeploy:terminal:pos'
+const SIZE_KEY = 'dockdeploy:terminal:size'
+
+function defaultSize() {
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1200
+  const h = typeof window !== 'undefined' ? window.innerHeight : 800
+  return {
+    width: Math.max(480, Math.min(960, w - 40)),
+    height: Math.max(360, Math.min(560, h - 120)),
+  }
+}
+
+function defaultPosition(size: { width: number; height: number }) {
+  const w = typeof window !== 'undefined' ? window.innerWidth : 1200
+  const h = typeof window !== 'undefined' ? window.innerHeight : 800
+  return {
+    x: Math.max(16, (w - size.width) / 2),
+    y: Math.max(16, (h - size.height) / 2),
+  }
+}
+
+export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -28,16 +42,93 @@ export function ServerTerminal({
 
   const [status, setStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [internalFullscreen, setInternalFullscreen] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
 
-  const isFullscreen = controlledFullscreen !== undefined ? controlledFullscreen : internalFullscreen
-
-  const toggleFullscreen = () => {
-    if (onToggleFullscreen) {
-      onToggleFullscreen()
-    } else {
-      setInternalFullscreen((prev) => !prev)
+  const [size, setSize] = useState<{ width: number; height: number }>(() => {
+    const saved = localStorage.getItem(SIZE_KEY)
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        const d = defaultSize()
+        return {
+          width: Math.max(480, Math.min(window.innerWidth - 16, parsed.width || d.width)),
+          height: Math.max(300, Math.min(window.innerHeight - 16, parsed.height || d.height)),
+        }
+      } catch {
+        /* ignore invalid JSON */
+      }
     }
+    return defaultSize()
+  })
+
+  const [position, setPosition] = useState<{ x: number; y: number }>(() => {
+    const saved = localStorage.getItem(POS_KEY)
+    if (saved) {
+      try {
+        return JSON.parse(saved)
+      } catch {
+        /* ignore invalid JSON */
+      }
+    }
+    return defaultPosition(size)
+  })
+
+  const isDraggingRef = useRef(false)
+  const dragOffsetRef = useRef({ x: 0, y: 0 })
+  const isResizingRef = useRef(false)
+  const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0 })
+
+  useEffect(() => {
+    localStorage.setItem(POS_KEY, JSON.stringify(position))
+  }, [position])
+
+  useEffect(() => {
+    localStorage.setItem(SIZE_KEY, JSON.stringify(size))
+  }, [size])
+
+  const handleDragStart = (e: React.MouseEvent) => {
+    if (isFullscreen) return
+    if ((e.target as HTMLElement).closest('button')) return
+    isDraggingRef.current = true
+    dragOffsetRef.current = { x: e.clientX - position.x, y: e.clientY - position.y }
+
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!isDraggingRef.current) return
+      const nextX = Math.max(8, Math.min(window.innerWidth - 160, moveEvent.clientX - dragOffsetRef.current.x))
+      const nextY = Math.max(8, Math.min(window.innerHeight - 60, moveEvent.clientY - dragOffsetRef.current.y))
+      setPosition({ x: nextX, y: nextY })
+    }
+    const onUp = () => {
+      isDraggingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    if (isFullscreen) return
+    e.preventDefault()
+    e.stopPropagation()
+    isResizingRef.current = true
+    resizeStartRef.current = { x: e.clientX, y: e.clientY, w: size.width, h: size.height }
+
+    const onMove = (moveEvent: MouseEvent) => {
+      if (!isResizingRef.current) return
+      const deltaX = moveEvent.clientX - resizeStartRef.current.x
+      const deltaY = moveEvent.clientY - resizeStartRef.current.y
+      const nextW = Math.max(480, Math.min(window.innerWidth - 16, resizeStartRef.current.w + deltaX))
+      const nextH = Math.max(300, Math.min(window.innerHeight - 16, resizeStartRef.current.h + deltaY))
+      setSize({ width: nextW, height: nextH })
+    }
+    const onUp = () => {
+      isResizingRef.current = false
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
   }
 
   const connect = useCallback(() => {
@@ -213,16 +304,28 @@ export function ServerTerminal({
 
   return (
     <div
-      className={cn(
-        'flex flex-col overflow-hidden bg-zinc-950 transition-all duration-150',
+      style={
         isFullscreen
-          ? 'fixed inset-0 z-50 h-screen w-screen rounded-none border-0'
-          : 'h-[32rem] w-full rounded-lg border border-zinc-800 shadow-2xl'
+          ? undefined
+          : { left: `${position.x}px`, top: `${position.y}px`, width: `${size.width}px`, height: `${size.height}px` }
+      }
+      className={cn(
+        'fixed z-50 flex flex-col overflow-hidden bg-zinc-950 transition-[width,height] duration-100',
+        isFullscreen
+          ? 'inset-0 h-screen w-screen rounded-none border-0'
+          : 'rounded-lg border border-zinc-800 shadow-2xl max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)]'
       )}
     >
-      {/* Terminal Title Bar */}
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-4 py-2 select-none">
-        <div className="flex items-center gap-2.5">
+      {/* Terminal Title Bar — drag anywhere on it to move the window */}
+      <div
+        onMouseDown={handleDragStart}
+        className={cn(
+          'flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-4 py-2 select-none shrink-0',
+          !isFullscreen && 'cursor-grab active:cursor-grabbing'
+        )}
+      >
+        <div className="flex items-center gap-2.5 pointer-events-none">
+          {!isFullscreen && <GripHorizontal className="size-3.5 text-zinc-600" aria-hidden />}
           <TermIcon className="size-4 text-sky-400" aria-hidden />
           <span className="font-mono text-xs font-semibold text-zinc-200">
             {server.username}@{server.host}
@@ -278,7 +381,7 @@ export function ServerTerminal({
             variant="ghost"
             size="sm"
             className="h-7 px-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-            onClick={toggleFullscreen}
+            onClick={() => setIsFullscreen((prev) => !prev)}
             title={isFullscreen ? 'Exit full screen' : 'Full screen'}
           >
             {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
@@ -311,6 +414,19 @@ export function ServerTerminal({
         className="relative flex-1 p-2 bg-[#09090b] focus:outline-none overflow-hidden"
         onClick={() => termRef.current?.focus()}
       />
+
+      {/* Bottom-right corner resize handle */}
+      {!isFullscreen && (
+        <div
+          onMouseDown={handleResizeStart}
+          className="absolute bottom-1 right-1 size-4 cursor-se-resize flex items-center justify-center text-zinc-600 hover:text-sky-400 transition-colors select-none z-10"
+          title="Drag to resize"
+        >
+          <svg className="size-3" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M14 14H12V12H14V14ZM14 10H12V8H14V10ZM10 14H8V12H10V14ZM14 6H12V4H14V6ZM6 14H4V12H6V14ZM10 10H8V8H10V10Z" />
+          </svg>
+        </div>
+      )}
     </div>
   )
 }

@@ -206,6 +206,23 @@ Nginx configuration changes on managed servers use a non-destructive 5-step safe
 - **Request Body Limits**: JSON APIs strictly enforce 1MB body limits (`10MB` for raw compose files) via `http.MaxBytesReader`.
 - **Automated Housekeeping**: A periodic background worker prunes expired sessions, cleans historical run records beyond retention limits, and purges audit logs older than 90 days.
 
+### 7. Local AI & External Agent Integration (Zero API Keys & MCP)
+
+- **Auto-Detection of Local Agents**: dockdeploy automatically detects running local LLMs and installed CLI agents on your system:
+  - **Ollama**: Queries local daemon at `http://localhost:11434` and discovers installed models (e.g. `gemma3:1b`, `llama3.2`).
+  - **Google Antigravity CLI (`agy`)**: Autonomous DevOps reasoning and diagnosis.
+  - **Claude Code CLI (`claude`)**: Anthropic's local CLI coding agent.
+  - **Hermes Agent (`hermes`)**: Tool-calling local agent.
+  - **GitHub Copilot (`copilot`)**: Local Copilot CLI and language model server.
+  - **LM Studio / LocalAI / vLLM**: OpenAI-compatible local endpoints.
+- **Zero API Key Requirement**: All local agents and models execute without requiring external API keys.
+- **Model Context Protocol (MCP) Server**: External agents can connect directly to your dockdeploy instance to inspect servers, retrieve container logs, restart services, and check system diagnostics:
+  - **Claude Code**: `claude mcp add dockdeploy -- ./dockdeploy mcp`
+  - **Hermes Agent**: `hermes mcp add dockdeploy -- ./dockdeploy mcp`
+  - **Antigravity CLI**: Configured via `~/.gemini/antigravity-cli/settings.json`
+  - **Cursor / VS Code**: Configured via `.cursor/mcp.json`
+  - **HTTP Agent API**: Direct JSON-RPC over `POST /api/mcp` with Bearer token authentication.
+
 ---
 
 ## Local Development

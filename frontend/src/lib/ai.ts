@@ -2,7 +2,53 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
 
-export type AIProvider = 'openai' | 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'custom'
+export type AIProvider =
+  | 'openai'
+  | 'anthropic'
+  | 'deepseek'
+  | 'openrouter'
+  | 'gemini'
+  | 'ollama'
+  | 'antigravity'
+  | 'claude-code'
+  | 'hermes'
+  | 'copilot'
+  | 'lmstudio'
+  | 'custom'
+
+export interface DetectedAgent {
+  id: string
+  name: string
+  type: 'http_llm' | 'cli_agent'
+  available: boolean
+  status: 'online' | 'ready' | 'offline' | 'not_found'
+  endpoint?: string
+  command?: string
+  path?: string
+  version?: string
+  models?: string[]
+  default_model?: string
+  description: string
+}
+
+export interface DetectionResult {
+  agents: DetectedAgent[]
+  recommended_id?: string
+  has_local_agents: boolean
+}
+
+export function isLocalAIProvider(provider: string): boolean {
+  return [
+    'ollama',
+    'antigravity',
+    'claude-code',
+    'hermes',
+    'copilot',
+    'lmstudio',
+    'localai',
+    'custom',
+  ].includes(provider)
+}
 
 export interface AISettings {
   user_id: string
@@ -76,16 +122,58 @@ export interface ServerDiagnosticReport {
 
 export const AI_PROVIDER_PRESETS: Record<
   AIProvider,
-  { name: string; defaultBaseUrl: string; defaultModel: string; models: string[] }
+  { name: string; defaultBaseUrl: string; defaultModel: string; models: string[]; isLocal?: boolean }
 > = {
+  ollama: {
+    name: 'Ollama (Local LLM Daemon)',
+    defaultBaseUrl: 'http://localhost:11434/v1',
+    defaultModel: 'gemma3:1b',
+    models: ['gemma3:1b', 'llama3.2', 'mistral', 'qwen2.5-coder', 'custom'],
+    isLocal: true,
+  },
+  antigravity: {
+    name: 'Antigravity CLI (agy)',
+    defaultBaseUrl: 'local://agy',
+    defaultModel: 'agy-default',
+    models: ['agy-default', 'agy-pro', 'agy-flash'],
+    isLocal: true,
+  },
+  'claude-code': {
+    name: 'Claude Code CLI (Local)',
+    defaultBaseUrl: 'local://claude',
+    defaultModel: 'claude-code',
+    models: ['claude-code'],
+    isLocal: true,
+  },
+  hermes: {
+    name: 'Hermes Agent CLI (Local)',
+    defaultBaseUrl: 'local://hermes',
+    defaultModel: 'hermes-agent',
+    models: ['hermes-agent'],
+    isLocal: true,
+  },
+  copilot: {
+    name: 'GitHub Copilot (Local)',
+    defaultBaseUrl: 'local://copilot',
+    defaultModel: 'copilot-cli',
+    models: ['copilot-cli'],
+    isLocal: true,
+  },
+  lmstudio: {
+    name: 'LM Studio (Local Server)',
+    defaultBaseUrl: 'http://localhost:1234/v1',
+    defaultModel: 'default',
+    models: ['default', 'custom'],
+    isLocal: true,
+  },
   openai: {
-    name: 'OpenAI',
+    name: 'OpenAI (Cloud)',
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o',
     models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'gpt-4-turbo'],
   },
   anthropic: {
-    name: 'Anthropic Claude',
+    name: 'Anthropic Claude (Cloud API)',
     defaultBaseUrl: 'https://api.anthropic.com/v1',
     defaultModel: 'claude-3-7-sonnet-20250219',
     models: [
@@ -96,13 +184,13 @@ export const AI_PROVIDER_PRESETS: Record<
     ],
   },
   deepseek: {
-    name: 'DeepSeek',
+    name: 'DeepSeek (Cloud)',
     defaultBaseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
     models: ['deepseek-chat', 'deepseek-reasoner'],
   },
   openrouter: {
-    name: 'OpenRouter',
+    name: 'OpenRouter (Multi-Model Cloud)',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'anthropic/claude-3.5-sonnet',
     models: [
@@ -114,17 +202,26 @@ export const AI_PROVIDER_PRESETS: Record<
     ],
   },
   gemini: {
-    name: 'Google Gemini',
+    name: 'Google Gemini (Cloud)',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.0-flash',
     models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
   },
   custom: {
-    name: 'Custom (Ollama, LocalAI, vLLM, OpenAI Compatible)',
+    name: 'Custom (LocalAI, vLLM, OpenAI Compatible)',
     defaultBaseUrl: 'http://localhost:11434/v1',
     defaultModel: 'llama3.2',
     models: ['llama3.2', 'mistral', 'qwen2.5-coder', 'custom'],
+    isLocal: true,
   },
+}
+
+export function useDetectLocalAgents() {
+  return useQuery({
+    queryKey: ['ai', 'detect'],
+    queryFn: () => api.get<DetectionResult>('/ai/detect'),
+    staleTime: 20_000,
+  })
 }
 
 export function useAISettings() {

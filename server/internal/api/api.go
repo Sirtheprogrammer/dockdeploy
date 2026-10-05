@@ -14,6 +14,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/config"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/discovery"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/mcp"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
@@ -39,6 +40,8 @@ type Server struct {
 	Discovery *discovery.Service
 	// AI owns multi-provider chat, server diagnostics, and safeguards.
 	AI *ai.Service
+	// MCP provides Model Context Protocol tooling for external AI agents.
+	MCP *mcp.Server
 
 	// SPA serves the built frontend. Requests that do not match /api are
 	// handed here, so the controller runs as a single container.
@@ -212,6 +215,7 @@ func (s *Server) Routes() (http.Handler, error) {
 		})
 
 		api.group("/ai", func(a routes) {
+			a.guarded(http.MethodGet, "/detect", auth.PermSelf, s.handleDetectLocalAgents)
 			a.guarded(http.MethodGet, "/settings", auth.PermSelf, s.handleGetAISettings)
 			a.guarded(http.MethodPut, "/settings", auth.PermSelf, s.handleUpdateAISettings)
 			a.guarded(http.MethodPost, "/test", auth.PermSelf, s.handleTestAIConnection)
@@ -226,6 +230,7 @@ func (s *Server) Routes() (http.Handler, error) {
 		})
 
 		api.guarded(http.MethodGet, "/audit", auth.PermAuditRead, s.handleListAudit)
+		api.guarded(http.MethodPost, "/mcp", auth.PermServerRead, s.handleMCP)
 
 		api.router.NotFound(s.wrap(func(http.ResponseWriter, *http.Request) error {
 			return NotFound("No such endpoint.")

@@ -24,6 +24,7 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/db"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/deploy"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/discovery"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/mcp"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/nginxx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/secrets"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
@@ -40,6 +41,10 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		return runMCP()
+	}
+
 	portFlag := flag.Int("port", 0, "Port to listen on (default 8081, or $PORT)")
 	dbFlag := flag.String("db", "", "Path to SQLite database file or postgres:// URL (default dockdeploy.db, or $DATABASE_URL)")
 	versionFlag := flag.Bool("version", false, "Print version and exit")
@@ -151,6 +156,7 @@ func run() error {
 	nginxManager := nginxx.NewManager(st, sealer, serverManager, log)
 	discoveryService := discovery.NewService(st, sealer, serverManager, log)
 	aiService := ai.NewService(st, sealer, serverManager)
+	mcpServer := mcp.NewServer(st, sealer, serverManager)
 
 	srv := &api.Server{
 		Config:    cfg,
@@ -163,6 +169,7 @@ func run() error {
 		Nginx:     nginxManager,
 		Discovery: discoveryService,
 		AI:        aiService,
+		MCP:       mcpServer,
 		Started:   time.Now(),
 		SPA:       web.Handler(log, `Run <code>npm run dev</code> in <code>frontend/</code> and open the Vite URL, or build the image to embed the dashboard.`),
 	}
@@ -265,3 +272,56 @@ func newLogger(cfg *config.Config) *slog.Logger {
 	}
 	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
+
+func runMCP() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Route logs strictly to stderr so stdout is clean JSON-RPC for MCP clients
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	sealer, err := secrets.NewSealer(cfg.EncryptionKey)
+	if err != nil {
+		return err
+	}
+
+	var st *store.Store
+	if cfg.DatabaseDriver == config.DriverSQLite {
+		sqliteDB, err := db.ConnectSQLite(ctx, cfg.DatabaseURL, log)
+		if err != nil {
+			return err
+		}
+		defer sqliteDB.Close()
+
+		if err := db.MigrateSQLite(ctx, sqliteDB, log); err != nil {
+			return err
+		}
+		st = store.NewSQLite(sqliteDB)
+	} else {
+		pool, err := db.Connect(ctx, cfg.DatabaseURL, log)
+		if err != nil {
+			return err
+		}
+		defer pool.Close()
+
+		if err := db.Migrate(ctx, pool, log); err != nil {
+			return err
+		}
+		st = store.New(pool)
+	}
+	defer st.Close()
+
+	sshPool := sshx.NewPool(log)
+	defer sshPool.Close()
+
+	serverManager := servers.NewManager(st, sealer, sshPool, log)
+	mcpServer := mcp.NewServer(st, sealer, serverManager)
+
+	return mcpServer.RunStdio(ctx)
+}
+
