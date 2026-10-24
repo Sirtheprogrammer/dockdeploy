@@ -8,18 +8,7 @@ Connect a machine with its SSH credentials and dockdeploy discovers what is alre
 
 ---
 
-## Status
 
-All planned milestones are complete and verified:
-
-- [x] **M0 — Foundation & Self-Hosting**: Go control plane, PostgreSQL database with embedded goose migrations, AES-256-GCM encrypted credential store, single-container self-hosting, and React 19 + Vite + Tailwind v4 dashboard shell.
-- [x] **M1 — Auth & RBAC**: Argon2id password hashing, session cookies, RBAC policy enforcement at the router level, invite links, scoped API tokens, and mutating request audit logging.
-- [x] **M2 — Servers & Container Management**: Agentless SSH-to-Docker socket tunneling, host-key TOFU confirmation, capability probes (Docker, Compose, sudo, Nginx, certbot, git), container lifecycle controls, live multiplexed logs, stats streaming, and interactive web terminal.
-- [x] **M3 — Deployments & Engine**: Deployments from Git repositories (Dockerfile), Git Compose, raw compose files, or pre-existing images. Live build log streaming, dual build strategies (target server build vs controller build + registry push), push-to-deploy webhooks (GitHub HMAC, GitLab, Bearer tokens), and instant image rollback.
-- [x] **M4 — Nginx & Custom Domains**: System Nginx virtual host management over SSH, safe 5-step non-destructive pipeline with syntax testing and automatic rollback on failure, automated Let's Encrypt TLS via certbot webroot, certificate expiration tracking, and full domains UI.
-- [x] **M5 — Hardening & Production Operations**: Auth rate limiting, CSRF protection on cookie-authenticated mutations, request body size guards, periodic automated housekeeping (pruning sessions, runs, and audit logs), and comprehensive operations documentation.
-
----
 
 ## Running It
 
