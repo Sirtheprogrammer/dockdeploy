@@ -142,6 +142,7 @@ func (s *Server) Routes() (http.Handler, error) {
 			sv.guarded(http.MethodDelete, "/{serverID}/members/{userID}", auth.PermUserWrite, s.handleRevokeServerAccess)
 
 			sv.guarded(http.MethodGet, "/{serverID}/docker", auth.PermServerRead, s.handleDockerInfo)
+			sv.guarded(http.MethodPost, "/{serverID}/docker/prune", auth.PermContainerOperate, s.handleDockerPrune)
 			sv.guarded(http.MethodGet, "/{serverID}/images", auth.PermServerRead, s.handleListImages)
 			sv.guarded(http.MethodGet, "/{serverID}/volumes", auth.PermServerRead, s.handleListVolumes)
 			sv.guarded(http.MethodGet, "/{serverID}/networks", auth.PermServerRead, s.handleListNetworks)
@@ -155,6 +156,12 @@ func (s *Server) Routes() (http.Handler, error) {
 			sv.guarded(http.MethodGet, "/{serverID}/terminal", auth.PermServerWrite, s.handleServerTerminal)
 
 			sv.guarded(http.MethodGet, "/{serverID}/files", auth.PermServerRead, s.handleListFiles)
+			sv.guarded(http.MethodPost, "/{serverID}/files/mkdir", auth.PermServerWrite, s.handleCreateDirectory)
+			sv.guarded(http.MethodDelete, "/{serverID}/files", auth.PermServerWrite, s.handleDeleteFile)
+			sv.guarded(http.MethodPost, "/{serverID}/files/copy", auth.PermServerWrite, s.handleCopyFile)
+			sv.guarded(http.MethodPost, "/{serverID}/files/move", auth.PermServerWrite, s.handleMoveFile)
+			sv.guarded(http.MethodPost, "/{serverID}/files/chmod", auth.PermServerWrite, s.handleChmodFile)
+			sv.guarded(http.MethodGet, "/{serverID}/files/scan", auth.PermServerRead, s.handleScanStorage)
 			sv.guarded(http.MethodGet, "/{serverID}/files/download", auth.PermServerRead, s.handleDownloadFile)
 			sv.guarded(http.MethodGet, "/{serverID}/files/archive", auth.PermServerRead, s.handleDownloadArchive)
 			sv.guarded(http.MethodGet, "/{serverID}/files/content", auth.PermServerRead, s.handleGetFileContent)

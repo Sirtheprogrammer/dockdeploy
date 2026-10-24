@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -335,6 +336,88 @@ func short(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// PruneResult summarizes the resources cleaned up by a prune operation.
+type PruneResult struct {
+	Target            string   `json:"target"`
+	ImagesDeleted     int      `json:"images_deleted"`
+	ContainersDeleted int      `json:"containers_deleted"`
+	VolumesDeleted    int      `json:"volumes_deleted"`
+	BuildCacheDeleted int      `json:"build_cache_deleted"`
+	SpaceReclaimed    uint64   `json:"space_reclaimed"`
+	Details           []string `json:"details,omitempty"`
+}
+
+// Prune executes resource cleanup on the Docker daemon (images, containers, volumes, build cache, or all).
+func (c *Client) Prune(ctx context.Context, target string, allImages bool) (*PruneResult, error) {
+	res := &PruneResult{
+		Target: target,
+	}
+
+	cleanImages := target == "images" || target == "all"
+	cleanContainers := target == "containers" || target == "all"
+	cleanVolumes := target == "volumes" || target == "all"
+	cleanBuildCache := target == "buildcache" || target == "all"
+
+	if cleanContainers {
+		rep, err := c.api.ContainersPrune(ctx, filters.NewArgs())
+		if err != nil {
+			return nil, fmt.Errorf("prune containers: %w", err)
+		}
+		res.ContainersDeleted += len(rep.ContainersDeleted)
+		res.SpaceReclaimed += rep.SpaceReclaimed
+		for _, id := range rep.ContainersDeleted {
+			res.Details = append(res.Details, fmt.Sprintf("Removed container %s", short(id)))
+		}
+	}
+
+	if cleanImages {
+		f := filters.NewArgs()
+		if !allImages {
+			f.Add("dangling", "true")
+		} else {
+			f.Add("dangling", "false")
+		}
+		rep, err := c.api.ImagesPrune(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("prune images: %w", err)
+		}
+		res.ImagesDeleted += len(rep.ImagesDeleted)
+		res.SpaceReclaimed += rep.SpaceReclaimed
+		for _, item := range rep.ImagesDeleted {
+			if item.Deleted != "" {
+				res.Details = append(res.Details, fmt.Sprintf("Deleted image %s", short(item.Deleted)))
+			} else if item.Untagged != "" {
+				res.Details = append(res.Details, fmt.Sprintf("Untagged image %s", short(item.Untagged)))
+			}
+		}
+	}
+
+	if cleanVolumes {
+		rep, err := c.api.VolumesPrune(ctx, filters.NewArgs())
+		if err != nil {
+			return nil, fmt.Errorf("prune volumes: %w", err)
+		}
+		res.VolumesDeleted += len(rep.VolumesDeleted)
+		res.SpaceReclaimed += rep.SpaceReclaimed
+		for _, name := range rep.VolumesDeleted {
+			res.Details = append(res.Details, fmt.Sprintf("Removed volume %s", name))
+		}
+	}
+
+	if cleanBuildCache {
+		rep, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{All: true})
+		if err == nil && rep != nil {
+			res.BuildCacheDeleted += len(rep.CachesDeleted)
+			res.SpaceReclaimed += rep.SpaceReclaimed
+			for _, cid := range rep.CachesDeleted {
+				res.Details = append(res.Details, fmt.Sprintf("Cleared build cache %s", short(cid)))
+			}
+		}
+	}
+
+	return res, nil
 }
 
 // isClosedStream recognises the benign end of a followed stream.

@@ -202,3 +202,37 @@ func (s *Server) handleDockerInfo(w http.ResponseWriter, r *http.Request) error 
 	}
 	return JSON(w, s.Log, http.StatusOK, info)
 }
+
+type dockerPruneRequest struct {
+	Target    string `json:"target"` // "images", "containers", "volumes", "buildcache", "all"
+	AllImages bool   `json:"all_images"`
+}
+
+func (s *Server) handleDockerPrune(w http.ResponseWriter, r *http.Request) error {
+	session, server, err := s.session(r)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	var req dockerPruneRequest
+	if r.Body != nil {
+		_ = DecodeJSON(w, r, &req)
+	}
+	if req.Target == "" {
+		req.Target = "all"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	result, err := session.Docker.Prune(ctx, req.Target, req.AllImages)
+	if err != nil {
+		return BadRequest("Failed to prune docker resources: %v", err).WithCause(err)
+	}
+
+	AuditMeta(r.Context(), "server_id", server.ID)
+	AuditMeta(r.Context(), "prune_target", req.Target)
+
+	return JSON(w, s.Log, http.StatusOK, result)
+}

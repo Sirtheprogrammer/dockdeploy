@@ -3,6 +3,7 @@ package servers
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -20,6 +20,8 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/sshx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
+
+var ErrSudoPasswordRequired = errors.New("sudo_password_required")
 
 type FileEntry struct {
 	Name        string    `json:"name"`
@@ -60,6 +62,65 @@ type FileContent struct {
 	Content     string    `json:"content"`
 }
 
+type StorageItem struct {
+	Path      string `json:"path"`
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	HumanSize string `json:"human_size"`
+	IsDir     bool   `json:"is_dir"`
+	ModTime   string `json:"mod_time"`
+}
+
+type StorageScanResult struct {
+	TargetPath     string        `json:"target_path"`
+	TopDirectories []StorageItem `json:"top_directories"`
+	LargestFiles   []StorageItem `json:"largest_files"`
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func (m *Manager) runSudo(ctx context.Context, server *store.Server, conn *sshx.Conn, sudoPasswordOverride, cmd string) (sshx.Result, error) {
+	var caps sshx.Capabilities
+	if len(server.Capabilities) > 0 {
+		_ = json.Unmarshal(server.Capabilities, &caps)
+	}
+
+	sudoPassword := sudoPasswordOverride
+	if sudoPassword == "" {
+		if cred, err := m.store.ServerCredential(ctx, m.sealer, server); err == nil && cred.SudoPassword != "" {
+			sudoPassword = cred.SudoPassword
+		}
+	}
+
+	var fullCmd string
+	if caps.SudoMode == sshx.SudoRoot || (conn.IsLocal() && os.Geteuid() == 0) {
+		fullCmd = cmd
+	} else if sudoPassword != "" {
+		fullCmd = fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' sh -c %s", shellQuote(sudoPassword), shellQuote(cmd))
+	} else if caps.SudoMode == sshx.SudoNoPassword {
+		fullCmd = "sudo -n sh -c " + shellQuote(cmd)
+	} else {
+		return sshx.Result{ExitCode: 1}, ErrSudoPasswordRequired
+	}
+
+	res, err := conn.Run(ctx, fullCmd)
+	if err != nil && res.ExitCode == 0 {
+		return res, err
+	}
+	if !res.Ok() {
+		errLower := strings.ToLower(res.Stderr)
+		if strings.Contains(errLower, "password is required") ||
+			strings.Contains(errLower, "no tty present") ||
+			strings.Contains(errLower, "incorrect password") ||
+			strings.Contains(errLower, "try again") {
+			return res, ErrSudoPasswordRequired
+		}
+	}
+	return res, nil
+}
+
 // resolvePath canonicalizes paths and resolves user home ~ relative to server environment.
 func (m *Manager) resolvePath(ctx context.Context, server *store.Server, path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
@@ -85,7 +146,12 @@ func (m *Manager) resolvePath(ctx context.Context, server *store.Server, path st
 
 // ListFiles lists directory contents with metadata, gracefully falling back to sudo
 // commands for root-protected directories such as Docker volumes.
-func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath string) (*DirectoryListing, error) {
+func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath string, sudoPasswords ...string) (*DirectoryListing, error) {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+
 	cleanPath, err := m.resolvePath(ctx, server, rawPath)
 	if err != nil {
 		return nil, err
@@ -98,28 +164,6 @@ func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath s
 	defer conn.Release()
 
 	if conn.IsLocal() {
-		stat, err := os.Stat(cleanPath)
-		if err == nil && !stat.IsDir() {
-			entry := FileEntry{
-				Name:        stat.Name(),
-				Path:        cleanPath,
-				Size:        stat.Size(),
-				Mode:        stat.Mode().String(),
-				IsDir:       false,
-				IsSymlink:   stat.Mode()&os.ModeSymlink != 0,
-				ModTime:     stat.ModTime().UTC(),
-				Permissions: fmt.Sprintf("%04o", stat.Mode().Perm()),
-			}
-			parent := filepath.Dir(cleanPath)
-			return &DirectoryListing{
-				Path:       cleanPath,
-				Parent:     parent,
-				Entries:    []FileEntry{entry},
-				TotalFiles: 1,
-				TotalBytes: stat.Size(),
-			}, nil
-		}
-
 		entries, err := os.ReadDir(cleanPath)
 		if err == nil {
 			parent := filepath.Dir(cleanPath)
@@ -160,78 +204,58 @@ func (m *Manager) ListFiles(ctx context.Context, server *store.Server, rawPath s
 		}
 	}
 
-	// Try SFTP first
+	// Try SFTP first if remote
 	if conn.Client() != nil {
 		sftpClient, sftpErr := sftp.NewClient(conn.Client())
-	if sftpErr == nil {
-		defer sftpClient.Close()
+		if sftpErr == nil {
+			defer sftpClient.Close()
 
-		stat, err := sftpClient.Stat(cleanPath)
-		if err == nil && !stat.IsDir() {
-			// Single file query
-			entry := FileEntry{
-				Name:        stat.Name(),
-				Path:        cleanPath,
-				Size:        stat.Size(),
-				Mode:        stat.Mode().String(),
-				IsDir:       false,
-				IsSymlink:   stat.Mode()&os.ModeSymlink != 0,
-				ModTime:     stat.ModTime().UTC(),
-				Permissions: fmt.Sprintf("%04o", stat.Mode().Perm()),
-			}
-			parent := filepath.Dir(cleanPath)
-			return &DirectoryListing{
-				Path:       cleanPath,
-				Parent:     parent,
-				Entries:    []FileEntry{entry},
-				TotalFiles: 1,
-				TotalBytes: stat.Size(),
-			}, nil
-		}
-
-		entries, err := sftpClient.ReadDir(cleanPath)
-		if err == nil {
-			parent := filepath.Dir(cleanPath)
-			if cleanPath == "/" {
-				parent = ""
-			}
-			listing := &DirectoryListing{
-				Path:    cleanPath,
-				Parent:  parent,
-				Entries: make([]FileEntry, 0, len(entries)),
-			}
-			for _, fi := range entries {
-				isSym := fi.Mode()&os.ModeSymlink != 0
-				isDir := fi.IsDir()
-				entry := FileEntry{
-					Name:        fi.Name(),
-					Path:        filepath.Join(cleanPath, fi.Name()),
-					Size:        fi.Size(),
-					Mode:        fi.Mode().String(),
-					IsDir:       isDir,
-					IsSymlink:   isSym,
-					ModTime:     fi.ModTime().UTC(),
-					Permissions: fmt.Sprintf("%04o", fi.Mode().Perm()),
+			entries, err := sftpClient.ReadDir(cleanPath)
+			if err == nil {
+				parent := filepath.Dir(cleanPath)
+				if cleanPath == "/" {
+					parent = ""
 				}
-				if isDir {
-					listing.TotalDirs++
-				} else {
-					listing.TotalFiles++
-					listing.TotalBytes += fi.Size()
+				listing := &DirectoryListing{
+					Path:    cleanPath,
+					Parent:  parent,
+					Entries: make([]FileEntry, 0, len(entries)),
 				}
-				listing.Entries = append(listing.Entries, entry)
+				for _, fi := range entries {
+					isSym := fi.Mode()&os.ModeSymlink != 0
+					isDir := fi.IsDir()
+					entry := FileEntry{
+						Name:        fi.Name(),
+						Path:        filepath.Join(cleanPath, fi.Name()),
+						Size:        fi.Size(),
+						Mode:        fi.Mode().String(),
+						IsDir:       isDir,
+						IsSymlink:   isSym,
+						ModTime:     fi.ModTime().UTC(),
+						Permissions: fmt.Sprintf("%04o", fi.Mode().Perm()),
+					}
+					if isDir {
+						listing.TotalDirs++
+					} else {
+						listing.TotalFiles++
+						listing.TotalBytes += fi.Size()
+					}
+					listing.Entries = append(listing.Entries, entry)
+				}
+				return listing, nil
 			}
-			return listing, nil
 		}
 	}
-	}
 
-	// Fallback using shell with sudo for restricted directories like /var/lib/docker/volumes
-	script := fmt.Sprintf(`sudo sh -c '
-TARGET="%s"
+	// Fallback using elevated shell with sudo for restricted directories like /var/lib/docker/volumes
+	script := fmt.Sprintf(`TARGET=%s
 if [ ! -e "$TARGET" ]; then
   echo "ERR_NOT_FOUND"
   exit 1
+fi
+if [ -f "$TARGET" ]; then
+  stat -c "%%n|%%s|%%a|%%Y|%%F" "$TARGET" 2>/dev/null
+  exit 0
 fi
 for f in "$TARGET"/* "$TARGET"/.*; do
   [ -e "$f" ] || continue
@@ -239,14 +263,17 @@ for f in "$TARGET"/* "$TARGET"/.*; do
   [ "$BN" = "." ] || [ "$BN" = ".." ] && continue
   stat -c "%%n|%%s|%%a|%%Y|%%F" "$f" 2>/dev/null
 done
-'`, escapeShell(cleanPath))
+`, shellQuote(cleanPath))
 
-	res, err := conn.Run(ctx, script)
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, script)
 	if err != nil {
-		return nil, fmt.Errorf("list directory: %w", err)
+		return nil, err
 	}
-	if strings.Contains(res.Stdout, "ERR_NOT_FOUND") {
-		return nil, os.ErrNotExist
+	if !res.Ok() {
+		if strings.Contains(res.Stdout, "ERR_NOT_FOUND") {
+			return nil, os.ErrNotExist
+		}
+		return nil, fmt.Errorf("list directory failed: %s", res.Stderr)
 	}
 
 	parent := filepath.Dir(cleanPath)
@@ -262,7 +289,7 @@ done
 	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		if line == "" || line == "ERR_NOT_FOUND" {
 			continue
 		}
 		parts := strings.Split(line, "|")
@@ -301,7 +328,12 @@ done
 }
 
 // DownloadFile opens a stream to download a single file from the server.
-func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPath string) (io.ReadCloser, int64, string, error) {
+func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPath string, sudoPasswords ...string) (io.ReadCloser, int64, string, error) {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+
 	cleanPath, err := m.resolvePath(ctx, server, rawPath)
 	if err != nil {
 		return nil, 0, "", err
@@ -314,17 +346,13 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 
 	if conn.IsLocal() {
 		f, err := os.Open(cleanPath)
-		if err != nil {
-			conn.Release()
-			return nil, 0, "", err
-		}
-		fi, err := f.Stat()
-		if err != nil {
+		if err == nil {
+			fi, err := f.Stat()
+			if err == nil {
+				return f, fi.Size(), fi.Name(), nil
+			}
 			f.Close()
-			conn.Release()
-			return nil, 0, "", err
 		}
-		return f, fi.Size(), fi.Name(), nil
 	}
 
 	if conn.Client() != nil {
@@ -344,8 +372,10 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 			}
 			sftpClient.Close()
 		}
+	}
 
-		// Fallback: stream using sudo cat via SSH session
+	// Fallback: stream using sudo cat via SSH session
+	if conn.Client() != nil {
 		session, err := conn.Client().NewSession()
 		if err != nil {
 			conn.Release()
@@ -359,7 +389,13 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 			return nil, 0, "", fmt.Errorf("stdout pipe: %w", err)
 		}
 
-		cmd := fmt.Sprintf(`sudo cat "%s"`, escapeShell(cleanPath))
+		var cmd string
+		if sudoPassword != "" {
+			cmd = fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' cat %s", shellQuote(sudoPassword), shellQuote(cleanPath))
+		} else {
+			cmd = fmt.Sprintf("sudo cat %s", shellQuote(cleanPath))
+		}
+
 		if err := session.Start(cmd); err != nil {
 			session.Close()
 			conn.Release()
@@ -379,7 +415,12 @@ func (m *Manager) DownloadFile(ctx context.Context, server *store.Server, rawPat
 }
 
 // ReadFileContent reads the text content of a file up to maxBytes, detecting whether it's binary.
-func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, rawPath string, maxBytes int64) (*FileContent, error) {
+func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, rawPath string, maxBytes int64, sudoPasswords ...string) (*FileContent, error) {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+
 	if maxBytes <= 0 {
 		maxBytes = 5 * 1024 * 1024 // 5 MB default limit
 	}
@@ -399,6 +440,7 @@ func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, raw
 	var perms string
 	var size int64 = -1
 	var buf []byte
+
 	if conn.IsLocal() {
 		fi, statErr := os.Stat(cleanPath)
 		if statErr == nil && !fi.IsDir() {
@@ -436,11 +478,10 @@ func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, raw
 		}
 	}
 
-	// Fallback via shell/sudo
+	// Fallback via elevated shell/sudo
 	if buf == nil {
-		// Get stat info
-		statCmd := fmt.Sprintf(`sudo stat -c "%%s|%%a|%%Y" "%s" 2>/dev/null`, escapeShell(cleanPath))
-		if statRes, err := conn.Run(ctx, statCmd); err == nil && statRes.Ok() {
+		statCmd := fmt.Sprintf(`stat -c "%%s|%%a|%%Y" %s 2>/dev/null`, shellQuote(cleanPath))
+		if statRes, err := m.runSudo(ctx, server, conn, sudoPassword, statCmd); err == nil && statRes.Ok() {
 			parts := strings.Split(strings.TrimSpace(statRes.Output()), "|")
 			if len(parts) == 3 {
 				size, _ = strconv.ParseInt(parts[0], 10, 64)
@@ -454,10 +495,10 @@ func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, raw
 			return nil, fmt.Errorf("file size (%d bytes) exceeds editor limit (%d bytes)", size, maxBytes)
 		}
 
-		catCmd := fmt.Sprintf(`sudo cat "%s"`, escapeShell(cleanPath))
-		res, err := conn.Run(ctx, catCmd)
+		catCmd := fmt.Sprintf(`cat %s`, shellQuote(cleanPath))
+		res, err := m.runSudo(ctx, server, conn, sudoPassword, catCmd)
 		if err != nil {
-			return nil, fmt.Errorf("read file: %w", err)
+			return nil, err
 		}
 		if !res.Ok() {
 			return nil, fmt.Errorf("read file failed: %s", res.Stderr)
@@ -507,13 +548,338 @@ func (m *Manager) ReadFileContent(ctx context.Context, server *store.Server, raw
 	}, nil
 }
 
-// WriteFileContent writes a string to a file on the server.
-func (m *Manager) WriteFileContent(ctx context.Context, server *store.Server, rawPath string, content string) error {
-	return m.UploadFile(ctx, server, rawPath, strings.NewReader(content), int64(len(content)), 0644)
+// WriteFileContent writes a string to a file on the server, supporting elevated sudo write.
+func (m *Manager) WriteFileContent(ctx context.Context, server *store.Server, rawPath string, content string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return err
+	}
+
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	if conn.IsLocal() {
+		dir := filepath.Dir(cleanPath)
+		_ = os.MkdirAll(dir, 0755)
+		if err := os.WriteFile(cleanPath, []byte(content), 0644); err == nil {
+			return nil
+		}
+	} else if conn.Client() != nil {
+		if sftpClient, err := sftp.NewClient(conn.Client()); err == nil {
+			defer sftpClient.Close()
+			dir := filepath.Dir(cleanPath)
+			_ = sftpClient.MkdirAll(dir)
+			if f, err := sftpClient.Create(cleanPath); err == nil {
+				_, copyErr := io.WriteString(f, content)
+				_ = f.Close()
+				if copyErr == nil {
+					return nil
+				}
+			}
+		}
+	}
+
+	// Sudo tee write fallback
+	dir := filepath.Dir(cleanPath)
+	writeScript := fmt.Sprintf("mkdir -p %s && cat > %s << 'DOCKDEPLOY_EOF'\n%s\nDOCKDEPLOY_EOF",
+		shellQuote(dir), shellQuote(cleanPath), content)
+
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, writeScript)
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("sudo write failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// CreateDirectory creates a directory path on the server with sudo fallback.
+func (m *Manager) CreateDirectory(ctx context.Context, server *store.Server, rawPath string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return err
+	}
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	if conn.IsLocal() {
+		if err := os.MkdirAll(cleanPath, 0755); err == nil {
+			return nil
+		}
+	} else if conn.Client() != nil {
+		if sftpClient, err := sftp.NewClient(conn.Client()); err == nil {
+			defer sftpClient.Close()
+			if err := sftpClient.MkdirAll(cleanPath); err == nil {
+				return nil
+			}
+		}
+	}
+
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, "mkdir -p "+shellQuote(cleanPath))
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("create directory failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// DeletePath removes a file or directory recursively on the server with sudo fallback.
+func (m *Manager) DeletePath(ctx context.Context, server *store.Server, rawPath string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return err
+	}
+	if cleanPath == "/" || cleanPath == "" {
+		return errors.New("cannot delete root filesystem")
+	}
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	if conn.IsLocal() {
+		if err := os.RemoveAll(cleanPath); err == nil {
+			return nil
+		}
+	} else if conn.Client() != nil {
+		if sftpClient, err := sftp.NewClient(conn.Client()); err == nil {
+			defer sftpClient.Close()
+			if err := sftpClient.RemoveAll(cleanPath); err == nil {
+				return nil
+			}
+		}
+	}
+
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, "rm -rf "+shellQuote(cleanPath))
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("delete failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// CopyPath copies a file or directory recursively on the server.
+func (m *Manager) CopyPath(ctx context.Context, server *store.Server, srcPath, dstPath string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanSrc, err := m.resolvePath(ctx, server, srcPath)
+	if err != nil {
+		return err
+	}
+	cleanDst, err := m.resolvePath(ctx, server, dstPath)
+	if err != nil {
+		return err
+	}
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	cmd := fmt.Sprintf("cp -a %s %s", shellQuote(cleanSrc), shellQuote(cleanDst))
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, cmd)
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("copy failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// MovePath moves or renames a file or directory on the server.
+func (m *Manager) MovePath(ctx context.Context, server *store.Server, srcPath, dstPath string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanSrc, err := m.resolvePath(ctx, server, srcPath)
+	if err != nil {
+		return err
+	}
+	cleanDst, err := m.resolvePath(ctx, server, dstPath)
+	if err != nil {
+		return err
+	}
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	cmd := fmt.Sprintf("mv %s %s", shellQuote(cleanSrc), shellQuote(cleanDst))
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, cmd)
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("move failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// ChmodPath changes the file permission mode.
+func (m *Manager) ChmodPath(ctx context.Context, server *store.Server, rawPath, mode string, sudoPasswords ...string) error {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return err
+	}
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	cmd := fmt.Sprintf("chmod %s %s", shellQuote(mode), shellQuote(cleanPath))
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, cmd)
+	if err != nil {
+		return err
+	}
+	if !res.Ok() {
+		return fmt.Errorf("chmod failed: %s", res.Stderr)
+	}
+	return nil
+}
+
+// ScanStorage discovers the largest directories and files consuming disk storage on the server.
+func (m *Manager) ScanStorage(ctx context.Context, server *store.Server, rawPath string, minSizeMB int, sudoPasswords ...string) (*StorageScanResult, error) {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	cleanPath, err := m.resolvePath(ctx, server, rawPath)
+	if err != nil {
+		return nil, err
+	}
+	if minSizeMB <= 0 {
+		minSizeMB = 10
+	}
+
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Release()
+
+	script := fmt.Sprintf(`TARGET=%s
+echo "===DIRS==="
+du -k -d 2 "$TARGET" 2>/dev/null | sort -rn | head -n 25
+echo "===FILES==="
+find "$TARGET" -xdev -type f -size +%dM -printf "%%s|%%TY-%%Tm-%%Td %%TH:%%TM|%%p\n" 2>/dev/null | sort -rn | head -n 35
+`, shellQuote(cleanPath), minSizeMB)
+
+	res, err := m.runSudo(ctx, server, conn, sudoPassword, script)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &StorageScanResult{
+		TargetPath:     cleanPath,
+		TopDirectories: make([]StorageItem, 0),
+		LargestFiles:   make([]StorageItem, 0),
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
+	section := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "===DIRS===" {
+			section = "dirs"
+			continue
+		} else if line == "===FILES===" {
+			section = "files"
+			continue
+		}
+		if line == "" {
+			continue
+		}
+
+		if section == "dirs" {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.ParseInt(fields[0], 10, 64)
+				dirPath := strings.Join(fields[1:], " ")
+				b := kb * 1024
+				result.TopDirectories = append(result.TopDirectories, StorageItem{
+					Path:      dirPath,
+					Name:      filepath.Base(dirPath),
+					Size:      b,
+					HumanSize: formatBytes(b),
+					IsDir:     true,
+				})
+			}
+		} else if section == "files" {
+			parts := strings.SplitN(line, "|", 3)
+			if len(parts) >= 3 {
+				b, _ := strconv.ParseInt(parts[0], 10, 64)
+				mtime := parts[1]
+				filePath := parts[2]
+				result.LargestFiles = append(result.LargestFiles, StorageItem{
+					Path:      filePath,
+					Name:      filepath.Base(filePath),
+					Size:      b,
+					HumanSize: formatBytes(b),
+					IsDir:     false,
+					ModTime:   mtime,
+				})
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // DownloadArchive streams a tar.gz archive of any directory (or volume) directly from the server.
-func (m *Manager) DownloadArchive(ctx context.Context, server *store.Server, rawPath string) (io.ReadCloser, string, error) {
+func (m *Manager) DownloadArchive(ctx context.Context, server *store.Server, rawPath string, sudoPasswords ...string) (io.ReadCloser, string, error) {
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+
 	cleanPath, err := m.resolvePath(ctx, server, rawPath)
 	if err != nil {
 		return nil, "", err
@@ -568,7 +934,14 @@ func (m *Manager) DownloadArchive(ctx context.Context, server *store.Server, raw
 			return nil, "", fmt.Errorf("stdout pipe: %w", err)
 		}
 
-		cmd := fmt.Sprintf(`sudo tar -czf - -C "%s" "%s"`, escapeShell(parent), escapeShell(base))
+		var cmd string
+		if sudoPassword != "" {
+			cmd = fmt.Sprintf("printf '%%s\\n' %s | sudo -S -p '' tar -czf - -C %s %s",
+				shellQuote(sudoPassword), shellQuote(parent), shellQuote(base))
+		} else {
+			cmd = fmt.Sprintf("sudo tar -czf - -C %s %s", shellQuote(parent), shellQuote(base))
+		}
+
 		if err := session.Start(cmd); err != nil {
 			session.Close()
 			conn.Release()
@@ -647,7 +1020,7 @@ func (m *Manager) UploadFile(ctx context.Context, server *store.Server, targetPa
 		}
 
 		dir := filepath.Dir(cleanPath)
-		cmd := fmt.Sprintf(`sudo mkdir -p "%s" && sudo tee "%s" >/dev/null`, escapeShell(dir), escapeShell(cleanPath))
+		cmd := fmt.Sprintf("sudo mkdir -p %s && sudo tee %s >/dev/null", shellQuote(dir), shellQuote(cleanPath))
 		if err := session.Start(cmd); err != nil {
 			return fmt.Errorf("start upload: %w", err)
 		}
@@ -700,18 +1073,18 @@ func (m *Manager) TransferFiles(ctx context.Context, srcServer *store.Server, ds
 
 	dstSession, err := dstConn.Client().NewSession()
 	if err != nil {
-		return nil, fmt.Errorf("destination session: %w", err)
+		return nil, fmt.Errorf("target session: %w", err)
 	}
 	defer dstSession.Close()
 
 	srcStdout, err := srcSession.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("source stdout: %w", err)
 	}
 
 	dstStdin, err := dstSession.StdinPipe()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("target stdin: %w", err)
 	}
 
 	srcParent := filepath.Dir(cleanSrc)
@@ -721,48 +1094,35 @@ func (m *Manager) TransferFiles(ctx context.Context, srcServer *store.Server, ds
 		srcBase = "."
 	}
 
-	srcCmd := fmt.Sprintf(`sudo tar -czf - -C "%s" "%s"`, escapeShell(srcParent), escapeShell(srcBase))
-	dstCmd := fmt.Sprintf(`sudo mkdir -p "%s" && sudo tar -xzf - -C "%s"`, escapeShell(cleanDst), escapeShell(cleanDst))
+	srcCmd := fmt.Sprintf("sudo tar -czf - -C %s %s", shellQuote(srcParent), shellQuote(srcBase))
+	dstCmd := fmt.Sprintf("sudo mkdir -p %s && sudo tar -xzf - -C %s", shellQuote(cleanDst), shellQuote(cleanDst))
 
 	start := time.Now()
-	if err := srcSession.Start(srcCmd); err != nil {
-		return nil, fmt.Errorf("start source archive: %w", err)
-	}
 
 	if err := dstSession.Start(dstCmd); err != nil {
-		return nil, fmt.Errorf("start target extract: %w", err)
+		return nil, fmt.Errorf("start target tar: %w", err)
 	}
-
-	var bytesCopied int64
-	countingReader := &countingReader{reader: srcStdout, count: &bytesCopied}
-
-	copyDone := make(chan error, 1)
-	go func() {
-		_, cErr := io.Copy(dstStdin, countingReader)
+	if err := srcSession.Start(srcCmd); err != nil {
 		_ = dstStdin.Close()
-		copyDone <- cErr
-	}()
-
-	var copyErr, srcErr, dstErr error
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case copyErr = <-copyDone:
+		return nil, fmt.Errorf("start source tar: %w", err)
 	}
 
-	srcErr = srcSession.Wait()
-	dstErr = dstSession.Wait()
+	copiedBytes, copyErr := io.Copy(dstStdin, srcStdout)
+	_ = dstStdin.Close()
+
+	srcWaitErr := srcSession.Wait()
+	dstWaitErr := dstSession.Wait()
 
 	duration := time.Since(start).Milliseconds()
 
 	if copyErr != nil {
-		return nil, fmt.Errorf("transfer pipe error: %w", copyErr)
+		return nil, fmt.Errorf("pipe transfer: %w", copyErr)
 	}
-	if srcErr != nil {
-		return nil, fmt.Errorf("source error: %w", srcErr)
+	if srcWaitErr != nil {
+		return nil, fmt.Errorf("source tar failed: %w", srcWaitErr)
 	}
-	if dstErr != nil {
-		return nil, fmt.Errorf("target error: %w", dstErr)
+	if dstWaitErr != nil {
+		return nil, fmt.Errorf("target extraction failed: %w", dstWaitErr)
 	}
 
 	return &FileTransferResult{
@@ -770,22 +1130,9 @@ func (m *Manager) TransferFiles(ctx context.Context, srcServer *store.Server, ds
 		TargetServerID: dstServer.ID,
 		SourcePath:     cleanSrc,
 		TargetPath:     cleanDst,
-		BytesCopied:    atomic.LoadInt64(&bytesCopied),
+		BytesCopied:    copiedBytes,
 		DurationMs:     duration,
 	}, nil
-}
-
-type countingReader struct {
-	reader io.Reader
-	count  *int64
-}
-
-func (cr *countingReader) Read(p []byte) (int, error) {
-	n, err := cr.reader.Read(p)
-	if n > 0 {
-		atomic.AddInt64(cr.count, int64(n))
-	}
-	return n, err
 }
 
 type sftpReadCloser struct {
@@ -840,8 +1187,4 @@ func (r *localCmdReadCloser) Read(p []byte) (int, error) {
 
 func (r *localCmdReadCloser) Close() error {
 	return r.cmd.Wait()
-}
-
-func escapeShell(arg string) string {
-	return strings.ReplaceAll(arg, `"`, `\"`)
 }

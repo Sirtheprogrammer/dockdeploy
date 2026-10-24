@@ -11,8 +11,21 @@ import (
 	"strings"
 
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/servers"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
+
+func (s *Server) extractSudo(r *http.Request, serverID string) string {
+	pass := r.Header.Get("X-Sudo-Password")
+	if pass == "" {
+		pass = r.URL.Query().Get("sudo_password")
+	}
+	saveSudo := r.Header.Get("X-Save-Sudo") == "true" || r.URL.Query().Get("save_sudo") == "true"
+	if saveSudo && pass != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, serverID, pass)
+	}
+	return pass
+}
 
 // handleListFiles returns a directory listing for a given path on the server.
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) error {
@@ -22,8 +35,13 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	path := r.URL.Query().Get("path")
-	listing, err := s.Servers.ListFiles(r.Context(), server, path)
+	sudoPass := s.extractSudo(r, server.ID)
+
+	listing, err := s.Servers.ListFiles(r.Context(), server, path, sudoPass)
 	if err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to access this root-protected path."})
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return NotFound("Path not found: %s", path)
 		}
@@ -45,8 +63,12 @@ func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) erro
 		return BadRequest("Query parameter 'path' is required.")
 	}
 
-	reader, size, name, err := s.Servers.DownloadFile(r.Context(), server, path)
+	sudoPass := s.extractSudo(r, server.ID)
+	reader, size, name, err := s.Servers.DownloadFile(r.Context(), server, path, sudoPass)
 	if err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to download this protected file."})
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return NotFound("File not found: %s", path)
 		}
@@ -81,8 +103,12 @@ func (s *Server) handleDownloadArchive(w http.ResponseWriter, r *http.Request) e
 		return BadRequest("Query parameter 'path' is required.")
 	}
 
-	reader, archiveName, err := s.Servers.DownloadArchive(r.Context(), server, path)
+	sudoPass := s.extractSudo(r, server.ID)
+	reader, archiveName, err := s.Servers.DownloadArchive(r.Context(), server, path, sudoPass)
 	if err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to archive this protected directory."})
+		}
 		return BadRequest("Failed to create archive: %v", err).WithCause(err)
 	}
 	defer reader.Close()
@@ -211,8 +237,12 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) er
 		return BadRequest("Query parameter 'path' is required.")
 	}
 
-	content, err := s.Servers.ReadFileContent(r.Context(), server, path, 5*1024*1024)
+	sudoPass := s.extractSudo(r, server.ID)
+	content, err := s.Servers.ReadFileContent(r.Context(), server, path, 5*1024*1024, sudoPass)
 	if err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to read this protected file."})
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return NotFound("File not found: %s", path)
 		}
@@ -223,8 +253,10 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) er
 }
 
 type saveFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path         string `json:"path"`
+	Content      string `json:"content"`
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
 }
 
 // handleSaveFileContent writes edited text content back to the server.
@@ -245,7 +277,18 @@ func (s *Server) handleSaveFileContent(w http.ResponseWriter, r *http.Request) e
 		return err
 	}
 
-	if err := s.Servers.WriteFileContent(r.Context(), server, path, req.Content); err != nil {
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = s.extractSudo(r, server.ID)
+	}
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Servers.WriteFileContent(r.Context(), server, path, req.Content, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to save this protected file."})
+		}
 		return BadRequest("Failed to save file: %v", err).WithCause(err)
 	}
 
@@ -260,3 +303,228 @@ func (s *Server) handleSaveFileContent(w http.ResponseWriter, r *http.Request) e
 	})
 }
 
+type mkdirRequest struct {
+	Path         string `json:"path"`
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
+}
+
+func (s *Server) handleCreateDirectory(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req mkdirRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	f := fields{}
+	path := f.required("path", req.Path, 1, 1024)
+	if err := f.err(); err != nil {
+		return err
+	}
+
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = s.extractSudo(r, server.ID)
+	}
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Servers.CreateDirectory(r.Context(), server, path, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to create this directory."})
+		}
+		return BadRequest("Failed to create directory: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusCreated, map[string]any{"path": path, "created": true})
+}
+
+type fileOpRequest struct {
+	Path         string `json:"path"`
+	SourcePath   string `json:"source_path"`
+	TargetPath   string `json:"target_path"`
+	Mode         string `json:"mode"`
+	SudoPassword string `json:"sudo_password"`
+	SaveSudo     bool   `json:"save_sudo"`
+}
+
+func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	sudoPass := s.extractSudo(r, server.ID)
+
+	if path == "" {
+		var req fileOpRequest
+		if err := DecodeJSON(w, r, &req); err == nil {
+			path = req.Path
+			if req.SudoPassword != "" {
+				sudoPass = req.SudoPassword
+			}
+			if req.SaveSudo && req.SudoPassword != "" {
+				_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+			}
+		}
+	}
+
+	if path == "" || path == "/" {
+		return BadRequest("A valid non-root path is required to delete.")
+	}
+
+	if err := s.Servers.DeletePath(r.Context(), server, path, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to delete this item."})
+		}
+		return BadRequest("Failed to delete path: %v", err).WithCause(err)
+	}
+
+	AuditMeta(r.Context(), "server_id", server.ID)
+	AuditMeta(r.Context(), "deleted_path", path)
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{"path": path, "deleted": true})
+}
+
+func (s *Server) handleCopyFile(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req fileOpRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	f := fields{}
+	src := f.required("source_path", req.SourcePath, 1, 1024)
+	dst := f.required("target_path", req.TargetPath, 1, 1024)
+	if err := f.err(); err != nil {
+		return err
+	}
+
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = s.extractSudo(r, server.ID)
+	}
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Servers.CopyPath(r.Context(), server, src, dst, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to copy this file/folder."})
+		}
+		return BadRequest("Failed to copy path: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{"source": src, "target": dst, "copied": true})
+}
+
+func (s *Server) handleMoveFile(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req fileOpRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	f := fields{}
+	src := f.required("source_path", req.SourcePath, 1, 1024)
+	dst := f.required("target_path", req.TargetPath, 1, 1024)
+	if err := f.err(); err != nil {
+		return err
+	}
+
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = s.extractSudo(r, server.ID)
+	}
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Servers.MovePath(r.Context(), server, src, dst, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to move/rename this item."})
+		}
+		return BadRequest("Failed to move/rename path: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{"source": src, "target": dst, "moved": true})
+}
+
+func (s *Server) handleChmodFile(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	var req fileOpRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+
+	f := fields{}
+	path := f.required("path", req.Path, 1, 1024)
+	mode := f.required("mode", req.Mode, 1, 10)
+	if err := f.err(); err != nil {
+		return err
+	}
+
+	sudoPass := req.SudoPassword
+	if sudoPass == "" {
+		sudoPass = s.extractSudo(r, server.ID)
+	}
+	if req.SaveSudo && req.SudoPassword != "" {
+		_ = s.Store.SetServerSudoPassword(r.Context(), s.Sealer, server.ID, req.SudoPassword)
+	}
+
+	if err := s.Servers.ChmodPath(r.Context(), server, path, mode, sudoPass); err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to chmod this item."})
+		}
+		return BadRequest("Failed to chmod path: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, map[string]any{"path": path, "mode": mode, "updated": true})
+}
+
+func (s *Server) handleScanStorage(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		path = "/"
+	}
+	minSizeMB := 10
+	if m := r.URL.Query().Get("min_size_mb"); m != "" {
+		if parsed, err := strconv.Atoi(m); err == nil && parsed > 0 {
+			minSizeMB = parsed
+		}
+	}
+
+	sudoPass := s.extractSudo(r, server.ID)
+	result, err := s.Servers.ScanStorage(r.Context(), server, path, minSizeMB, sudoPass)
+	if err != nil {
+		if errors.Is(err, servers.ErrSudoPasswordRequired) {
+			return Invalid(fields{"sudo_password": "Sudo password is required to scan storage on this path."})
+		}
+		return BadRequest("Failed to scan storage: %v", err).WithCause(err)
+	}
+
+	return JSON(w, s.Log, http.StatusOK, result)
+}

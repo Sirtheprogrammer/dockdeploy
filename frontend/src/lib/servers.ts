@@ -271,6 +271,30 @@ export function useNetworks(serverID: string, enabled: boolean) {
   })
 }
 
+export interface DockerPruneResult {
+  target: string
+  images_deleted: number
+  containers_deleted: number
+  volumes_deleted: number
+  build_cache_deleted: number
+  space_reclaimed: number
+  details?: string[]
+}
+
+export function useDockerPrune(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<DockerPruneResult, ApiError, { target: string; all_images?: boolean }>({
+    mutationFn: (body) => api.post<DockerPruneResult>(`/servers/${serverID}/docker/prune`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: containersKey(serverID) })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'images'] })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'volumes'] })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'docker'] })
+      void queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'metrics'] })
+    },
+  })
+}
+
 /** Capabilities come back as an empty object before the first probe. */
 export function capabilitiesOf(server: Server | undefined): Capabilities | null {
   if (!server) return null
@@ -325,6 +349,39 @@ export interface SystemInfo {
   server_time: string
 }
 
+export interface ProcessInfo {
+  user: string
+  pid: number
+  cpu: number
+  memory: number
+  command: string
+}
+
+export interface PartitionMetrics {
+  filesystem: string
+  mount: string
+  total_bytes: number
+  used_bytes: number
+  free_bytes: number
+  used_percent: number
+}
+
+export interface ListeningSocket {
+  protocol: string
+  local: string
+  process: string
+}
+
+export interface TroubleshootingMetrics {
+  top_processes_cpu?: ProcessInfo[]
+  top_processes_mem?: ProcessInfo[]
+  partitions?: PartitionMetrics[]
+  listening_sockets?: ListeningSocket[]
+  failed_systemd_units?: string[]
+  oom_errors?: string[]
+  tcp_connection_count?: number
+}
+
 export interface ServerMetrics {
   server_id: string
   collected_at: string
@@ -335,6 +392,7 @@ export interface ServerMetrics {
   memory: MemoryMetrics
   disk: DiskMetrics
   docker: DockerMetrics
+  troubleshooting?: TroubleshootingMetrics
 }
 
 export function useServerMetrics(
@@ -415,14 +473,107 @@ export interface FileTransferResult {
   duration_ms: number
 }
 
-export function useDirectoryListing(serverID: string, path: string = '~') {
+export function useDirectoryListing(serverID: string, path: string = '~', sudoPassword?: string) {
   return useQuery<DirectoryListing, ApiError>({
-    queryKey: ['servers', serverID, 'files', path],
-    queryFn: ({ signal }) =>
-      api.get<DirectoryListing>(`/servers/${serverID}/files?path=${encodeURIComponent(path)}`, {
+    queryKey: ['servers', serverID, 'files', path, sudoPassword ?? ''],
+    queryFn: ({ signal }) => {
+      const headers: Record<string, string> = {}
+      if (sudoPassword) {
+        headers['X-Sudo-Password'] = sudoPassword
+      }
+      return api.get<DirectoryListing>(`/servers/${serverID}/files?path=${encodeURIComponent(path)}`, {
         signal,
-      }),
+        headers,
+      })
+    },
     enabled: serverID !== '',
+    retry: (failureCount, error) => {
+      if (error?.fields?.sudo_password) return false
+      return failureCount < 2
+    },
+  })
+}
+
+export interface LargeItem {
+  path: string
+  size_bytes: number
+  size_human: string
+  is_dir: boolean
+}
+
+export interface StorageScanResult {
+  target_path: string
+  min_size_mb: number
+  scanned_at: string
+  top_large_dirs: LargeItem[]
+  top_large_files: LargeItem[]
+}
+
+export function useScanStorage(serverID: string, path: string = '/', minSizeMB: number = 10, sudoPassword?: string) {
+  return useQuery<StorageScanResult, ApiError>({
+    queryKey: ['servers', serverID, 'files', 'scan', path, minSizeMB, sudoPassword ?? ''],
+    queryFn: ({ signal }) => {
+      const headers: Record<string, string> = {}
+      if (sudoPassword) {
+        headers['X-Sudo-Password'] = sudoPassword
+      }
+      return api.get<StorageScanResult>(
+        `/servers/${serverID}/files/scan?path=${encodeURIComponent(path)}&min_size_mb=${minSizeMB}`,
+        { signal, headers },
+      )
+    },
+    enabled: Boolean(serverID),
+    retry: false,
+  })
+}
+
+export function useCreateDirectory(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ path: string; created: boolean }, ApiError, { path: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) => api.post<{ path: string; created: boolean }>(`/servers/${serverID}/files/mkdir`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useDeleteFile(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ path: string; deleted: boolean }, ApiError, { path: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) => api.delete<{ path: string; deleted: boolean }>(`/servers/${serverID}/files`, { body }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useCopyFile(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ source: string; target: string; copied: boolean }, ApiError, { source_path: string; target_path: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) => api.post<{ source: string; target: string; copied: boolean }>(`/servers/${serverID}/files/copy`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useMoveFile(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ source: string; target: string; moved: boolean }, ApiError, { source_path: string; target_path: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) => api.post<{ source: string; target: string; moved: boolean }>(`/servers/${serverID}/files/move`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
+  })
+}
+
+export function useChmodFile(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<{ path: string; mode: string; updated: boolean }, ApiError, { path: string; mode: string; sudo_password?: string; save_sudo?: boolean }>({
+    mutationFn: (body) => api.post<{ path: string; mode: string; updated: boolean }>(`/servers/${serverID}/files/chmod`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverID, 'files'] })
+    },
   })
 }
 
@@ -491,14 +642,19 @@ export interface FileContent {
   content: string
 }
 
-export function useFileContent(serverID: string, path: string | null) {
+export function useFileContent(serverID: string, path: string | null, sudoPassword?: string) {
   return useQuery<FileContent, ApiError>({
-    queryKey: ['servers', serverID, 'files', 'content', path],
-    queryFn: ({ signal }) =>
-      api.get<FileContent>(
+    queryKey: ['servers', serverID, 'files', 'content', path, sudoPassword ?? ''],
+    queryFn: ({ signal }) => {
+      const headers: Record<string, string> = {}
+      if (sudoPassword) {
+        headers['X-Sudo-Password'] = sudoPassword
+      }
+      return api.get<FileContent>(
         `/servers/${serverID}/files/content?path=${encodeURIComponent(path || '')}`,
-        { signal },
-      ),
+        { signal, headers },
+      )
+    },
     enabled: Boolean(serverID && path),
   })
 }
@@ -508,12 +664,12 @@ export function useSaveFileContent(serverID: string) {
   return useMutation<
     { path: string; size: number; saved: boolean },
     ApiError,
-    { path: string; content: string }
+    { path: string; content: string; sudo_password?: string; save_sudo?: boolean }
   >({
-    mutationFn: ({ path, content }) =>
+    mutationFn: ({ path, content, sudo_password, save_sudo }) =>
       api.put<{ path: string; size: number; saved: boolean }>(
         `/servers/${serverID}/files/content`,
-        { path, content },
+        { path, content, sudo_password, save_sudo },
       ),
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({

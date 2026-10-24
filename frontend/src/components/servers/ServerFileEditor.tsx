@@ -130,6 +130,7 @@ interface ServerFileEditorProps {
   canWrite?: boolean
   isNewFile?: boolean
   initialDirectory?: string
+  sudoPassword?: string
   onSaved?: () => void
 }
 
@@ -141,6 +142,7 @@ export function ServerFileEditor({
   canWrite = true,
   isNewFile = false,
   initialDirectory = '~',
+  sudoPassword,
   onSaved,
 }: ServerFileEditorProps) {
   const [userContent, setUserContent] = useState<string | null>(null)
@@ -161,6 +163,7 @@ export function ServerFileEditor({
   const { data: fileData, isPending, isError, error } = useFileContent(
     server.id,
     isNewFile ? null : filePath,
+    sudoPassword,
   )
   const saveMutation = useSaveFileContent(server.id)
 
@@ -208,6 +211,7 @@ export function ServerFileEditor({
       {
         path: activePath,
         content: currentContent,
+        sudo_password: sudoPassword,
       },
       {
         onSuccess: () => {

@@ -1,22 +1,54 @@
 import {
   Activity,
+  AlertCircle,
   AlertTriangle,
   CheckCircle2,
   Cpu,
+  Flame,
   HardDrive,
   Layers,
   MemoryStick,
   RefreshCw,
   Server as ServerIcon,
+  ShieldAlert,
+  Sparkles,
+  Terminal,
+  Trash2,
   XCircle,
+  Zap,
 } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 
 import { Alert } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useServerMetrics, type HealthStatus, type Server } from '@/lib/servers'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  useDockerPrune,
+  useServerMetrics,
+  type DockerPruneResult,
+  type HealthStatus,
+  type Server,
+} from '@/lib/servers'
 import { formatBytes } from '@/lib/utils'
 
 interface ServerMetricsViewProps {
@@ -105,10 +137,41 @@ function ProgressBar({
 
 export function ServerMetricsView({ server, active = true, onLaunchTerminal }: ServerMetricsViewProps) {
   const [autoRefresh, setAutoRefresh] = useState(true)
+
+  // Docker Cleanup Modal State
+  const [pruneTarget, setPruneTarget] = useState<'images' | 'containers' | 'volumes' | 'buildcache' | 'all' | null>(null)
+  const [pruneAllImages, setPruneAllImages] = useState(false)
+  const [pruneResult, setPruneResult] = useState<DockerPruneResult | null>(null)
+
   const query = useServerMetrics(server.id, {
     enabled: active,
     refetchInterval: autoRefresh && active ? 5000 : false,
   })
+
+  const pruneMutation = useDockerPrune(server.id)
+
+  function handlePruneConfirm() {
+    if (!pruneTarget) return
+
+    pruneMutation.mutate(
+      {
+        target: pruneTarget,
+        all_images: pruneAllImages || pruneTarget === 'all',
+      },
+      {
+        onSuccess: (res) => {
+          setPruneResult(res)
+          toast.success(
+            `Pruned ${res.target}: reclaimed ${formatBytes(res.space_reclaimed)} of disk space!`,
+          )
+          void query.refetch()
+        },
+        onError: (err) => {
+          toast.error(`Prune failed: ${err.message}`)
+        },
+      },
+    )
+  }
 
   if (query.isPending) {
     return (
@@ -146,6 +209,7 @@ export function ServerMetricsView({ server, active = true, onLaunchTerminal }: S
   const disk = metrics.disk ?? { filesystem: '', mount: '/', total_bytes: 0, used_bytes: 0, free_bytes: 0, used_percent: 0 }
   const docker = metrics.docker ?? { status: 'unavailable', server_version: '', containers_total: 0, containers_running: 0, containers_stopped: 0, images_count: 0 }
   const system = metrics.system ?? { hostname: server.name, os: '', kernel: '', uptime_seconds: 0, server_time: '' }
+  const troubleshooting = metrics.troubleshooting ?? {}
   const health: HealthStatus = metrics.health ?? 'healthy'
   const healthIssues: string[] = Array.isArray(metrics.health_issues) ? metrics.health_issues : []
 
@@ -281,7 +345,7 @@ export function ServerMetricsView({ server, active = true, onLaunchTerminal }: S
         <Card className="shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center justify-between text-muted-foreground">
-              <span>Disk Storage</span>
+              <span>Disk Storage (/)</span>
               <HardDrive className="size-4 text-primary" aria-hidden />
             </CardTitle>
           </CardHeader>
@@ -334,6 +398,330 @@ export function ServerMetricsView({ server, active = true, onLaunchTerminal }: S
         </Card>
       </div>
 
+      {/* Docker Storage Cleanup Bar */}
+      <Card className="border-border/80 shadow-sm">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                <Trash2 className="size-4 text-destructive" />
+                Docker Storage & System Cleanup
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Free up disk space on this server by pruning dangling images, stopped containers, build caches, and unused volumes.
+              </CardDescription>
+            </div>
+            <Badge variant="outline" className="w-fit text-xs font-mono">
+              {safeNumber(docker.containers_stopped)} stopped &middot; {safeNumber(docker.images_count)} images
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-8"
+              onClick={() => {
+                setPruneTarget('images')
+                setPruneAllImages(false)
+                setPruneResult(null)
+              }}
+              title="Delete untagged and dangling Docker images"
+            >
+              <Layers className="size-3.5 mr-1.5 text-amber-500" />
+              Prune Stale Images
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-8"
+              onClick={() => {
+                setPruneTarget('containers')
+                setPruneResult(null)
+              }}
+              title="Delete all stopped containers that are no longer running"
+            >
+              <XCircle className="size-3.5 mr-1.5 text-red-400" />
+              Delete Stopped Containers
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-8"
+              onClick={() => {
+                setPruneTarget('buildcache')
+                setPruneResult(null)
+              }}
+              title="Clear Docker build cache to reclaim disk space"
+            >
+              <Flame className="size-3.5 mr-1.5 text-orange-500" />
+              Clear Build Cache
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-8"
+              onClick={() => {
+                setPruneTarget('volumes')
+                setPruneResult(null)
+              }}
+              title="Delete unattached Docker storage volumes"
+            >
+              <HardDrive className="size-3.5 mr-1.5 text-primary" />
+              Prune Unused Volumes
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="text-xs h-8 ml-auto"
+              onClick={() => {
+                setPruneTarget('all')
+                setPruneAllImages(true)
+                setPruneResult(null)
+              }}
+              title="Run full docker system prune to reclaim maximum storage"
+            >
+              <Sparkles className="size-3.5 mr-1.5" />
+              Full Docker Cleanup
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Troubleshooting & Fast Diagnostics Tabs */}
+      <Card className="border-border/80 shadow-sm">
+        <CardHeader className="pb-3 border-b bg-muted/10">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Zap className="size-4 text-amber-500" />
+            Fast Troubleshooting & System Diagnostics
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Inspect top resource-consuming processes, disk partition saturation, active network ports, and systemd/OOM errors.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <Tabs defaultValue="processes" className="w-full">
+            <TabsList className="grid w-full grid-cols-4 mb-4">
+              <TabsTrigger value="processes" className="text-xs">
+                Top Processes
+              </TabsTrigger>
+              <TabsTrigger value="partitions" className="text-xs">
+                Disk Partitions ({(troubleshooting.partitions ?? []).length})
+              </TabsTrigger>
+              <TabsTrigger value="ports" className="text-xs">
+                Open Ports ({(troubleshooting.listening_sockets ?? []).length})
+              </TabsTrigger>
+              <TabsTrigger value="health" className="text-xs">
+                Alerts & OOM ({((troubleshooting.failed_systemd_units ?? []).length) + ((troubleshooting.oom_errors ?? []).length)})
+              </TabsTrigger>
+            </TabsList>
+
+            {/* TAB 1: Top Processes */}
+            <TabsContent value="processes" className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Top CPU */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <Cpu className="size-3.5 text-primary" />
+                    Top CPU Processes
+                  </h4>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="text-[11px]">
+                          <TableHead>PID</TableHead>
+                          <TableHead>User</TableHead>
+                          <TableHead>CPU %</TableHead>
+                          <TableHead>Command</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(troubleshooting.top_processes_cpu ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-4">
+                              No process data available.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          troubleshooting.top_processes_cpu?.map((p) => (
+                            <TableRow key={`cpu-${p.pid}-${p.command}`} className="font-mono text-xs">
+                              <TableCell className="text-muted-foreground">{p.pid}</TableCell>
+                              <TableCell>{p.user}</TableCell>
+                              <TableCell className="font-semibold text-primary">{p.cpu.toFixed(1)}%</TableCell>
+                              <TableCell className="truncate max-w-[140px]" title={p.command}>
+                                {p.command}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+
+                {/* Top Memory */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <MemoryStick className="size-3.5 text-primary" />
+                    Top Memory Processes
+                  </h4>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="text-[11px]">
+                          <TableHead>PID</TableHead>
+                          <TableHead>User</TableHead>
+                          <TableHead>RAM %</TableHead>
+                          <TableHead>Command</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(troubleshooting.top_processes_mem ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-4">
+                              No process data available.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          troubleshooting.top_processes_mem?.map((p) => (
+                            <TableRow key={`mem-${p.pid}-${p.command}`} className="font-mono text-xs">
+                              <TableCell className="text-muted-foreground">{p.pid}</TableCell>
+                              <TableCell>{p.user}</TableCell>
+                              <TableCell className="font-semibold text-amber-500">{p.memory.toFixed(1)}%</TableCell>
+                              <TableCell className="truncate max-w-[140px]" title={p.command}>
+                                {p.command}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* TAB 2: Partitions */}
+            <TabsContent value="partitions" className="space-y-3">
+              {(troubleshooting.partitions ?? []).length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">No partition details available.</p>
+              ) : (
+                <div className="space-y-3">
+                  {troubleshooting.partitions?.map((part) => (
+                    <div key={part.mount} className="p-3 rounded-md border bg-muted/10 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="font-semibold text-foreground">{part.mount} ({part.filesystem})</span>
+                        <span className="text-muted-foreground">
+                          {formatBytes(part.used_bytes)} / {formatBytes(part.total_bytes)} ({part.used_percent.toFixed(1)}%)
+                        </span>
+                      </div>
+                      <ProgressBar value={part.used_percent} />
+                      <div className="text-[11px] text-muted-foreground flex justify-between font-mono">
+                        <span>Free: {formatBytes(part.free_bytes)}</span>
+                        <span>Used: {formatBytes(part.used_bytes)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            {/* TAB 3: Open Ports & Sockets */}
+            <TabsContent value="ports" className="space-y-3">
+              <div className="flex items-center justify-between text-xs text-muted-foreground pb-1">
+                <span>Active Listening TCP/UDP Ports</span>
+                {troubleshooting.tcp_connection_count ? (
+                  <Badge variant="outline" className="font-mono text-[11px]">
+                    {troubleshooting.tcp_connection_count} Active TCP Connections
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="text-[11px]">
+                      <TableHead>Protocol</TableHead>
+                      <TableHead>Local Address & Port</TableHead>
+                      <TableHead>Process / Daemon</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(troubleshooting.listening_sockets ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} className="text-center text-xs text-muted-foreground py-4">
+                          No open port information returned.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      troubleshooting.listening_sockets?.map((s, idx) => (
+                        <TableRow key={`port-${idx}-${s.local}`} className="font-mono text-xs">
+                          <TableCell className="uppercase text-muted-foreground font-semibold text-[11px]">
+                            {s.protocol}
+                          </TableCell>
+                          <TableCell className="font-semibold text-foreground">{s.local}</TableCell>
+                          <TableCell className="text-primary truncate max-w-[200px]">
+                            {s.process || 'system'}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            {/* TAB 4: Alerts & OOM */}
+            <TabsContent value="health" className="space-y-4">
+              {/* Failed Systemd Units */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+                  <ShieldAlert className="size-3.5 text-amber-500" />
+                  Failed Systemd Services ({troubleshooting.failed_systemd_units?.length || 0})
+                </h4>
+                {(troubleshooting.failed_systemd_units ?? []).length === 0 ? (
+                  <div className="p-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 text-xs text-emerald-500 flex items-center gap-2">
+                    <CheckCircle2 className="size-4 shrink-0" />
+                    <span>No failed systemd services detected. All services operating normally.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {troubleshooting.failed_systemd_units?.map((unit, idx) => (
+                      <div key={idx} className="p-2.5 rounded border border-amber-500/30 bg-amber-500/10 font-mono text-xs text-amber-600 dark:text-amber-400">
+                        {unit}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* OOM Killer Logs */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+                  <AlertCircle className="size-3.5 text-destructive" />
+                  Out-Of-Memory (OOM) Killer Events ({troubleshooting.oom_errors?.length || 0})
+                </h4>
+                {(troubleshooting.oom_errors ?? []).length === 0 ? (
+                  <div className="p-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 text-xs text-emerald-500 flex items-center gap-2">
+                    <CheckCircle2 className="size-4 shrink-0" />
+                    <span>No recent Out-Of-Memory (OOM) kills detected in kernel dmesg.</span>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {troubleshooting.oom_errors?.map((oom, idx) => (
+                      <div key={idx} className="p-2.5 rounded border border-destructive/30 bg-destructive/10 font-mono text-xs text-destructive">
+                        {oom}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Terminal launch shortcut */}
       {onLaunchTerminal ? (
         <div className="rounded-lg border border-dashed p-4 flex flex-col sm:flex-row items-center justify-between gap-3 bg-card/40">
           <div className="space-y-0.5 text-center sm:text-left">
@@ -343,11 +731,90 @@ export function ServerMetricsView({ server, active = true, onLaunchTerminal }: S
             </p>
           </div>
           <Button onClick={onLaunchTerminal} size="sm" variant="outline" className="shrink-0 gap-1.5">
-            <Activity className="size-3.5 text-sky-400" />
+            <Terminal className="size-3.5 text-sky-400" />
             Launch Terminal
           </Button>
         </div>
       ) : null}
+
+      {/* Docker Cleanup Confirmation Modal */}
+      <Dialog open={Boolean(pruneTarget)} onOpenChange={(open) => !open && setPruneTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-5 text-destructive" />
+              Confirm Docker Cleanup
+            </DialogTitle>
+            <DialogDescription>
+              {pruneTarget === 'images' && 'Remove dangling and unreferenced Docker images to reclaim disk space.'}
+              {pruneTarget === 'containers' && 'Permanently delete all stopped Docker containers on this server.'}
+              {pruneTarget === 'volumes' && 'Delete all unused Docker storage volumes not connected to any container.'}
+              {pruneTarget === 'buildcache' && 'Clear all cached layers from previous docker builds.'}
+              {pruneTarget === 'all' && 'Run a full system prune: removes stopped containers, unused networks, unreferenced images, and build cache.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {pruneResult ? (
+            <div className="space-y-3 py-2">
+              <Alert variant="info">
+                <div className="space-y-1 text-xs">
+                  <div className="font-semibold text-sm">Cleanup Completed!</div>
+                  <p>Reclaimed: <strong>{formatBytes(pruneResult.space_reclaimed)}</strong></p>
+                  <p>Images deleted: {pruneResult.images_deleted}</p>
+                  <p>Containers removed: {pruneResult.containers_deleted}</p>
+                  <p>Volumes removed: {pruneResult.volumes_deleted}</p>
+                  <p>Build cache entries cleared: {pruneResult.build_cache_deleted}</p>
+                </div>
+              </Alert>
+
+              <DialogFooter>
+                <Button onClick={() => setPruneTarget(null)}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Target server: <strong>{server.name}</strong> ({server.host})
+              </p>
+
+              {pruneTarget === 'images' && (
+                <div className="flex items-center space-x-2 pt-1">
+                  <input
+                    id="prune-all-img"
+                    type="checkbox"
+                    checked={pruneAllImages}
+                    onChange={(e) => setPruneAllImages(e.target.checked)}
+                    className="size-4 rounded border-input text-primary focus:ring-primary"
+                  />
+                  <label htmlFor="prune-all-img" className="text-xs cursor-pointer">
+                    Also delete unused images (not just dangling untagged ones)
+                  </label>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPruneTarget(null)}
+                  disabled={pruneMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handlePruneConfirm}
+                  disabled={pruneMutation.isPending}
+                >
+                  {pruneMutation.isPending ? 'Cleaning up...' : 'Confirm Cleanup'}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
