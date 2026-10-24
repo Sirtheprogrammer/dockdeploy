@@ -13,7 +13,9 @@ import { Overview } from '@/routes/Overview'
 import { ServerDetail } from '@/routes/ServerDetail'
 import { Servers } from '@/routes/Servers'
 import { Setup } from '@/routes/Setup'
+import { TerminalPopup } from '@/routes/TerminalPopup'
 import { AIAssistantSettings } from '@/routes/settings/AIAssistantSettings'
+import { Appearance } from '@/routes/settings/Appearance'
 import { Audit } from '@/routes/settings/Audit'
 import { Credentials } from '@/routes/settings/Credentials'
 import { Profile } from '@/routes/settings/Profile'
@@ -32,6 +34,7 @@ export default function App() {
 
       <Route element={<RequireAuth />}>
         <Route path="/ai-popup" element={<AIPopup />} />
+        <Route path="/terminal-popup" element={<TerminalPopup />} />
         <Route element={<AppShell />}>
           <Route index element={<Overview />} />
           <Route path="servers" element={<Servers />} />
@@ -46,6 +49,7 @@ export default function App() {
           <Route path="settings" element={<SettingsLayout />}>
             <Route index element={<Profile />} />
             <Route path="profile" element={<Profile />} />
+            <Route path="appearance" element={<Appearance />} />
             <Route path="ai" element={<AIAssistantSettings />} />
             <Route path="tokens" element={<Tokens />} />
             <Route path="credentials" element={<Credentials />} />

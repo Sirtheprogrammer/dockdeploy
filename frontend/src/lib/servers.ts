@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 
 import { api, type ApiError } from '@/lib/api'
 
@@ -361,6 +362,28 @@ export function serverTerminalWebSocketURL(
   const qs = params.toString()
   if (qs) url += `?${qs}`
   return url
+}
+
+export function openDetachedTerminal(serverId: string, serverName?: string): boolean {
+  const width = 1000
+  const height = 650
+  const left = Math.max(0, Math.floor((window.screen.width - width) / 2))
+  const top = Math.max(0, Math.floor((window.screen.height - height) / 2))
+
+  const popup = window.open(
+    `/terminal-popup?serverId=${encodeURIComponent(serverId)}`,
+    `dockdeploy_term_${serverId}`,
+    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,status=no,toolbar=no,menubar=no`,
+  )
+
+  if (popup) {
+    popup.focus()
+    toast.info(`Terminal for ${serverName || 'server'} opened in detached window`)
+    return true
+  } else {
+    toast.error('Popup blocked by browser. Please allow popups for this site.')
+    return false
+  }
 }
 
 export interface FileEntry {

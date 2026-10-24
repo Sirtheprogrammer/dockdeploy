@@ -1,6 +1,7 @@
 import {
   Box,
   Download,
+  ExternalLink,
   FolderOpen,
   HardDrive,
   KeyRound,
@@ -48,6 +49,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { can, useSession } from '@/lib/session'
 import {
   capabilitiesOf,
+  openDetachedTerminal,
   serverArchiveDownloadURL,
   useContainerAction,
   useContainers,
@@ -126,10 +128,26 @@ export function ServerDetail() {
               </Button>
             ) : null}
             {canTerminal ? (
-              <Button variant="outline" size="sm" onClick={() => setTerminalOpen(true)}>
-                <Terminal className="size-3.5" aria-hidden />
-                Terminal
-              </Button>
+              <div className="inline-flex rounded-md shadow-xs">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTerminalOpen(true)}
+                  className="rounded-r-none border-r-0"
+                >
+                  <Terminal className="size-3.5 mr-1" aria-hidden />
+                  Terminal
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openDetachedTerminal(server.data.id, server.data.name)}
+                  className="rounded-l-none px-2"
+                  title="Open terminal in a separate popup window"
+                >
+                  <ExternalLink className="size-3.5" aria-hidden />
+                </Button>
+              </div>
             ) : null}
             {canWrite ? (
               <Button variant="outline" size="sm" onClick={() => setExecRootOpen(true)}>

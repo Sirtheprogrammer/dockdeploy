@@ -321,7 +321,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// Prepare Context
-	contextInfo, _ := s.AI.PrepareContext(r.Context(), req.ServerID, req.DeploymentID)
+	contextInfo, _ := s.AI.PrepareContext(r.Context(), req.ServerID, req.DeploymentID, req.ContainerID)
 
 	// Fetch recent history
 	_, history, _ := s.Store.GetAIConversation(r.Context(), conv.ID, user.ID)

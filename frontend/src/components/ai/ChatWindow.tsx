@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Send,
   Server as ServerIcon,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
   Trash2,
@@ -531,7 +532,56 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
       </div>
 
       {/* Input Area */}
-      <div className="border-t bg-card/60 p-3">
+      <div className="border-t bg-card/60 p-2.5 space-y-2">
+        {/* Quick Action Chips */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <button
+            type="button"
+            disabled={isStreaming}
+            onClick={() => handleSendMessage('Run a complete system diagnostic check on all servers and containers.')}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-muted-foreground hover:border-primary/60 hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+          >
+            <Stethoscope className="size-3 text-emerald-500" />
+            <span>Health Check</span>
+          </button>
+          <button
+            type="button"
+            disabled={isStreaming}
+            onClick={() => handleSendMessage('Check for any failing, restarting, or dead containers and propose recovery actions.')}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-muted-foreground hover:border-primary/60 hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+          >
+            <AlertCircle className="size-3 text-amber-500" />
+            <span>Troubleshoot Containers</span>
+          </button>
+          <button
+            type="button"
+            disabled={isStreaming}
+            onClick={() => handleSendMessage('Reclaim disk space on the active server: propose a Docker prune command to safely remove dangling images and build cache.')}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-muted-foreground hover:border-primary/60 hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+          >
+            <Trash2 className="size-3 text-rose-500" />
+            <span>Prune Docker Disks</span>
+          </button>
+          <button
+            type="button"
+            disabled={isStreaming}
+            onClick={() => handleSendMessage('Verify Nginx reverse proxy configuration and check Let\'s Encrypt SSL certificates renewal status.')}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-muted-foreground hover:border-primary/60 hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+          >
+            <ShieldCheck className="size-3 text-sky-500" />
+            <span>SSL & Nginx</span>
+          </button>
+          <button
+            type="button"
+            disabled={isStreaming}
+            onClick={() => handleSendMessage('Check recent deployment runs, analyze errors, and propose redeployment if needed.')}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-background/80 px-2.5 py-1 text-muted-foreground hover:border-primary/60 hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+          >
+            <Rocket className="size-3 text-indigo-500" />
+            <span>Deployment Status</span>
+          </button>
+        </div>
+
         <form
           onSubmit={(e) => {
             e.preventDefault()

@@ -1,7 +1,8 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { ChevronsUpDown, LogOut, Settings, User } from 'lucide-react'
+import { ChevronsUpDown, LogOut, Palette, Settings, User } from 'lucide-react'
 import { useNavigate } from 'react-router'
 
+import { useTheme } from '@/lib/theme'
 import { ROLE_LABELS, useLogout, useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
@@ -14,6 +15,9 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
   const navigate = useNavigate()
   const { data: user } = useSession()
   const logout = useLogout()
+  const { theme, themes } = useTheme()
+
+  const currentThemeName = themes.find((t) => t.id === theme)?.name ?? theme
 
   if (!user) return null
 
@@ -60,6 +64,11 @@ export function UserMenu({ compact = false }: { compact?: boolean }) {
           <DropdownMenu.Item className={itemClass} onSelect={() => void navigate('/settings/profile')}>
             <User className="size-4" aria-hidden />
             Your profile
+          </DropdownMenu.Item>
+          <DropdownMenu.Item className={itemClass} onSelect={() => void navigate('/settings/appearance')}>
+            <Palette className="size-4" aria-hidden />
+            <span className="flex-1">Appearance</span>
+            <span className="text-[11px] text-muted-foreground font-mono">{currentThemeName}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Item className={itemClass} onSelect={() => void navigate('/settings')}>
             <Settings className="size-4" aria-hidden />

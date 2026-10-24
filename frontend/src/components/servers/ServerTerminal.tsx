@@ -1,16 +1,17 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { AlertCircle, GripHorizontal, Maximize2, Minimize2, RefreshCw, Terminal as TermIcon, Trash2 } from 'lucide-react'
+import { AlertCircle, ExternalLink, GripHorizontal, Maximize2, Minimize2, RefreshCw, Terminal as TermIcon, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
-import { serverTerminalWebSocketURL, type Server } from '@/lib/servers'
+import { openDetachedTerminal, serverTerminalWebSocketURL, type Server } from '@/lib/servers'
 import { cn } from '@/lib/utils'
 
-interface ServerTerminalProps {
+export interface ServerTerminalProps {
   server: Server
   onClose?: () => void
+  standalone?: boolean
 }
 
 const POS_KEY = 'dockdeploy:terminal:pos'
@@ -34,7 +35,7 @@ function defaultPosition(size: { width: number; height: number }) {
   }
 }
 
-export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
+export function ServerTerminal({ server, onClose, standalone = false }: ServerTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -305,32 +306,39 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
   return (
     <div
       style={
-        isFullscreen
+        standalone || isFullscreen
           ? undefined
           : { left: `${position.x}px`, top: `${position.y}px`, width: `${size.width}px`, height: `${size.height}px` }
       }
       className={cn(
         'fixed z-50 flex flex-col overflow-hidden bg-zinc-950 transition-[width,height] duration-100',
-        isFullscreen
+        standalone || isFullscreen
           ? 'inset-0 h-screen w-screen rounded-none border-0'
           : 'rounded-lg border border-zinc-800 shadow-2xl max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)]'
       )}
     >
       {/* Terminal Title Bar — drag anywhere on it to move the window */}
       <div
-        onMouseDown={handleDragStart}
+        onMouseDown={!standalone ? handleDragStart : undefined}
         className={cn(
           'flex items-center justify-between border-b border-zinc-800 bg-zinc-900/90 px-4 py-2 select-none shrink-0',
-          !isFullscreen && 'cursor-grab active:cursor-grabbing'
+          !standalone && !isFullscreen && 'cursor-grab active:cursor-grabbing'
         )}
       >
         <div className="flex items-center gap-2.5 pointer-events-none">
-          {!isFullscreen && <GripHorizontal className="size-3.5 text-zinc-600" aria-hidden />}
+          {!standalone && !isFullscreen && <GripHorizontal className="size-3.5 text-zinc-600" aria-hidden />}
           <TermIcon className="size-4 text-sky-400" aria-hidden />
           <span className="font-mono text-xs font-semibold text-zinc-200">
             {server.username}@{server.host}
             {server.port !== 22 ? `:${server.port}` : ''}
           </span>
+
+          {standalone && (
+            <span className="hidden sm:inline-flex rounded border border-zinc-700 bg-zinc-800/60 px-1.5 py-0.5 font-mono text-[9px] text-zinc-400">
+              External Window
+            </span>
+          )}
+
           <span
             className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase ${
               status === 'connected'
@@ -377,15 +385,35 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
             </Button>
           ) : null}
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
-            onClick={() => setIsFullscreen((prev) => !prev)}
-            title={isFullscreen ? 'Exit full screen' : 'Full screen'}
-          >
-            {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-          </Button>
+          {!standalone && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+              onClick={() => {
+                const opened = openDetachedTerminal(server.id, server.name)
+                if (opened && onClose) {
+                  onClose()
+                }
+              }}
+              title="Open terminal in a separate popup window"
+            >
+              <ExternalLink className="size-3.5" />
+              <span className="hidden sm:inline text-xs ml-1">Detach</span>
+            </Button>
+          )}
+
+          {!standalone && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+              onClick={() => setIsFullscreen((prev) => !prev)}
+              title={isFullscreen ? 'Exit full screen' : 'Full screen'}
+            >
+              {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+            </Button>
+          )}
 
           {onClose ? (
             <Button
@@ -393,7 +421,7 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
               size="sm"
               className="h-7 px-2 text-zinc-400 hover:text-destructive hover:bg-zinc-800"
               onClick={onClose}
-              title="Close terminal"
+              title={standalone ? 'Close window' : 'Close terminal'}
             >
               &times;
             </Button>
@@ -416,7 +444,7 @@ export function ServerTerminal({ server, onClose }: ServerTerminalProps) {
       />
 
       {/* Bottom-right corner resize handle */}
-      {!isFullscreen && (
+      {!standalone && !isFullscreen && (
         <div
           onMouseDown={handleResizeStart}
           className="absolute bottom-1 right-1 size-4 cursor-se-resize flex items-center justify-center text-zinc-600 hover:text-sky-400 transition-colors select-none z-10"

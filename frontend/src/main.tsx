@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router'
 
 import App from './App.tsx'
 import { ApiError } from './lib/api.ts'
+import { ThemeProvider } from './lib/theme.tsx'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -28,9 +29,11 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   </StrictMode>,
 )
