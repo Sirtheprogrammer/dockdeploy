@@ -496,20 +496,31 @@ export function useDirectoryListing(serverID: string, path: string = '~', sudoPa
 
 export interface LargeItem {
   path: string
-  size_bytes: number
-  size_human: string
+  name?: string
+  size?: number
+  size_bytes?: number
+  human_size?: string
+  size_human?: string
   is_dir: boolean
 }
 
 export interface StorageScanResult {
   target_path: string
-  min_size_mb: number
-  scanned_at: string
-  top_large_dirs: LargeItem[]
-  top_large_files: LargeItem[]
+  min_size_mb?: number
+  scanned_at?: string
+  top_directories?: LargeItem[]
+  largest_files?: LargeItem[]
+  top_large_dirs?: LargeItem[]
+  top_large_files?: LargeItem[]
 }
 
-export function useScanStorage(serverID: string, path: string = '/', minSizeMB: number = 10, sudoPassword?: string) {
+export function useScanStorage(
+  serverID: string,
+  path: string = '/',
+  minSizeMB: number = 10,
+  sudoPassword?: string,
+  enabled: boolean = false,
+) {
   return useQuery<StorageScanResult, ApiError>({
     queryKey: ['servers', serverID, 'files', 'scan', path, minSizeMB, sudoPassword ?? ''],
     queryFn: ({ signal }) => {
@@ -522,7 +533,7 @@ export function useScanStorage(serverID: string, path: string = '/', minSizeMB: 
         { signal, headers },
       )
     },
-    enabled: Boolean(serverID),
+    enabled: Boolean(serverID && enabled),
     retry: false,
   })
 }

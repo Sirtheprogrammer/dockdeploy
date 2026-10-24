@@ -66,15 +66,21 @@ type StorageItem struct {
 	Path      string `json:"path"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
+	SizeBytes int64  `json:"size_bytes"`
 	HumanSize string `json:"human_size"`
+	SizeHuman string `json:"size_human"`
 	IsDir     bool   `json:"is_dir"`
 	ModTime   string `json:"mod_time"`
 }
 
 type StorageScanResult struct {
 	TargetPath     string        `json:"target_path"`
+	MinSizeMB      int           `json:"min_size_mb"`
+	ScannedAt      string        `json:"scanned_at"`
 	TopDirectories []StorageItem `json:"top_directories"`
 	LargestFiles   []StorageItem `json:"largest_files"`
+	TopLargeDirs   []StorageItem `json:"top_large_dirs"`
+	TopLargeFiles  []StorageItem `json:"top_large_files"`
 }
 
 func shellQuote(s string) string {
@@ -806,8 +812,12 @@ find "$TARGET" -xdev -type f -size +%dM -printf "%%s|%%TY-%%Tm-%%Td %%TH:%%TM|%%
 
 	result := &StorageScanResult{
 		TargetPath:     cleanPath,
+		MinSizeMB:      minSizeMB,
+		ScannedAt:      time.Now().UTC().Format(time.RFC3339),
 		TopDirectories: make([]StorageItem, 0),
 		LargestFiles:   make([]StorageItem, 0),
+		TopLargeDirs:   make([]StorageItem, 0),
+		TopLargeFiles:  make([]StorageItem, 0),
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(res.Stdout))
@@ -831,13 +841,17 @@ find "$TARGET" -xdev -type f -size +%dM -printf "%%s|%%TY-%%Tm-%%Td %%TH:%%TM|%%
 				kb, _ := strconv.ParseInt(fields[0], 10, 64)
 				dirPath := strings.Join(fields[1:], " ")
 				b := kb * 1024
-				result.TopDirectories = append(result.TopDirectories, StorageItem{
+				item := StorageItem{
 					Path:      dirPath,
 					Name:      filepath.Base(dirPath),
 					Size:      b,
+					SizeBytes: b,
 					HumanSize: formatBytes(b),
+					SizeHuman: formatBytes(b),
 					IsDir:     true,
-				})
+				}
+				result.TopDirectories = append(result.TopDirectories, item)
+				result.TopLargeDirs = append(result.TopLargeDirs, item)
 			}
 		} else if section == "files" {
 			parts := strings.SplitN(line, "|", 3)
@@ -845,14 +859,18 @@ find "$TARGET" -xdev -type f -size +%dM -printf "%%s|%%TY-%%Tm-%%Td %%TH:%%TM|%%
 				b, _ := strconv.ParseInt(parts[0], 10, 64)
 				mtime := parts[1]
 				filePath := parts[2]
-				result.LargestFiles = append(result.LargestFiles, StorageItem{
+				item := StorageItem{
 					Path:      filePath,
 					Name:      filepath.Base(filePath),
 					Size:      b,
+					SizeBytes: b,
 					HumanSize: formatBytes(b),
+					SizeHuman: formatBytes(b),
 					IsDir:     false,
 					ModTime:   mtime,
-				})
+				}
+				result.LargestFiles = append(result.LargestFiles, item)
+				result.TopLargeFiles = append(result.TopLargeFiles, item)
 			}
 		}
 	}

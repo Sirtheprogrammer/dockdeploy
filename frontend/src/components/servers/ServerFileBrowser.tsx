@@ -170,6 +170,7 @@ export function ServerFileBrowser({
     scanPath,
     scanMinMB,
     sudoPassword,
+    scannerOpen,
   )
 
   const isSudoRequired =
@@ -1320,117 +1321,121 @@ export function ServerFileBrowser({
                   </div>
                 )}
               </Alert>
-            ) : scanQuery.data ? (
-              <Tabs defaultValue="dirs" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-3">
-                  <TabsTrigger value="dirs">
-                    Top Directories ({scanQuery.data.top_large_dirs.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="files">
-                    Largest Files ({scanQuery.data.top_large_files.length})
-                  </TabsTrigger>
-                </TabsList>
+            ) : scanQuery.data ? (() => {
+              const topDirs = scanQuery.data.top_large_dirs ?? scanQuery.data.top_directories ?? []
+              const topFiles = scanQuery.data.top_large_files ?? scanQuery.data.largest_files ?? []
+              return (
+                <Tabs defaultValue="dirs" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2 mb-3">
+                    <TabsTrigger value="dirs">
+                      Top Directories ({topDirs.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="files">
+                      Largest Files ({topFiles.length})
+                    </TabsTrigger>
+                  </TabsList>
 
-                <TabsContent value="dirs" className="space-y-2">
-                  {scanQuery.data.top_large_dirs.length === 0 ? (
-                    <p className="text-center text-xs text-muted-foreground py-8">
-                      No large directories found under this path.
-                    </p>
-                  ) : (
-                    scanQuery.data.top_large_dirs.map((dir) => (
-                      <div
-                        key={dir.path}
-                        className="flex items-center justify-between p-2.5 rounded border bg-muted/20 hover:bg-muted/40 transition-colors text-xs font-mono"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 mr-2">
-                          <Folder className="size-4 text-primary shrink-0" />
-                          <span className="truncate text-foreground" title={dir.path}>
-                            {dir.path}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant="outline" className="font-mono text-[11px]">
-                            {dir.size_human}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs font-sans"
-                            onClick={() => {
-                              handleNavigate(dir.path)
-                              setScannerOpen(false)
-                            }}
-                          >
-                            Jump Here
-                          </Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </TabsContent>
-
-                <TabsContent value="files" className="space-y-2">
-                  {scanQuery.data.top_large_files.length === 0 ? (
-                    <p className="text-center text-xs text-muted-foreground py-8">
-                      No files exceeding {scanMinMB}MB found under this path.
-                    </p>
-                  ) : (
-                    scanQuery.data.top_large_files.map((file) => (
-                      <div
-                        key={file.path}
-                        className="flex items-center justify-between p-2.5 rounded border bg-muted/20 hover:bg-muted/40 transition-colors text-xs font-mono"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 mr-2">
-                          <File className="size-4 text-muted-foreground shrink-0" />
-                          <span className="truncate text-foreground" title={file.path}>
-                            {file.path}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant="outline" className="font-mono text-[11px]">
-                            {file.size_human}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs font-sans"
-                            onClick={() => {
-                              setEditingFilePath(file.path)
-                              setIsNewFile(false)
-                              setEditorOpen(true)
-                            }}
-                          >
-                            View
-                          </Button>
-                          {canWrite && (
+                  <TabsContent value="dirs" className="space-y-2">
+                    {topDirs.length === 0 ? (
+                      <p className="text-center text-xs text-muted-foreground py-8">
+                        No large directories found under this path.
+                      </p>
+                    ) : (
+                      topDirs.map((dir) => (
+                        <div
+                          key={dir.path}
+                          className="flex items-center justify-between p-2.5 rounded border bg-muted/20 hover:bg-muted/40 transition-colors text-xs font-mono"
+                        >
+                          <div className="flex items-center gap-2 min-w-0 mr-2">
+                            <Folder className="size-4 text-primary shrink-0" />
+                            <span className="truncate text-foreground" title={dir.path}>
+                              {dir.path}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant="outline" className="font-mono text-[11px]">
+                              {dir.size_human || dir.human_size || ''}
+                            </Badge>
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 w-7 p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10"
-                              onClick={() =>
-                                setDeleteTarget({
-                                  name: file.path.split('/').pop() || file.path,
-                                  path: file.path,
-                                  size: file.size_bytes,
-                                  mode: '',
-                                  is_dir: false,
-                                  is_symlink: false,
-                                  mod_time: '',
-                                  permissions: '',
-                                })
-                              }
-                              title="Delete file"
+                              className="h-7 text-xs font-sans"
+                              onClick={() => {
+                                handleNavigate(dir.path)
+                                setScannerOpen(false)
+                              }}
                             >
-                              <Trash2 className="size-3.5" />
+                              Jump Here
                             </Button>
-                          )}
+                          </div>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </TabsContent>
-              </Tabs>
-            ) : null}
+                      ))
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="files" className="space-y-2">
+                    {topFiles.length === 0 ? (
+                      <p className="text-center text-xs text-muted-foreground py-8">
+                        No files exceeding {scanMinMB}MB found under this path.
+                      </p>
+                    ) : (
+                      topFiles.map((file) => (
+                        <div
+                          key={file.path}
+                          className="flex items-center justify-between p-2.5 rounded border bg-muted/20 hover:bg-muted/40 transition-colors text-xs font-mono"
+                        >
+                          <div className="flex items-center gap-2 min-w-0 mr-2">
+                            <File className="size-4 text-muted-foreground shrink-0" />
+                            <span className="truncate text-foreground" title={file.path}>
+                              {file.path}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant="outline" className="font-mono text-[11px]">
+                              {file.size_human || file.human_size || ''}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs font-sans"
+                              onClick={() => {
+                                setEditingFilePath(file.path)
+                                setIsNewFile(false)
+                                setEditorOpen(true)
+                              }}
+                            >
+                              View
+                            </Button>
+                            {canWrite && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                                onClick={() =>
+                                  setDeleteTarget({
+                                    name: file.path.split('/').pop() || file.path,
+                                    path: file.path,
+                                    size: file.size_bytes ?? file.size ?? 0,
+                                    mode: '',
+                                    is_dir: false,
+                                    is_symlink: false,
+                                    mod_time: '',
+                                    permissions: '',
+                                  })
+                                }
+                                title="Delete file"
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </TabsContent>
+                </Tabs>
+              )
+            })() : null}
           </div>
 
           <DialogFooter>
