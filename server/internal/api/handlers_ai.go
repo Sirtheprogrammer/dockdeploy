@@ -379,7 +379,14 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 
-	assistantReply := fullResponse.String()
+	assistantReply := strings.TrimSpace(fullResponse.String())
+	if assistantReply == "" {
+		s.Log.Warn("ai stream returned empty reply")
+		writer.event("error", map[string]string{
+			"message": "AI assistant completed without generating a response. Please check your provider or model settings.",
+		})
+		return nil
+	}
 
 	// Check for safeguard action
 	var assistantMetadata json.RawMessage
@@ -396,7 +403,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	// Save Assistant Reply
+	// Save Assistant Reply (only when non-empty)
 	msg, saveErr := s.Store.AddAIMessage(r.Context(), conv.ID, "assistant", assistantReply, assistantMetadata)
 	if saveErr == nil && msg != nil {
 		writer.event("done", map[string]any{"message_id": msg.ID, "conversation_id": conv.ID})

@@ -16,6 +16,7 @@ import {
   User,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 
@@ -51,6 +52,7 @@ interface ChatWindowProps {
 }
 
 export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowProps) {
+  const queryClient = useQueryClient()
   const { data: settings } = useAISettings()
   const { data: conversations = [], refetch: refetchConvs } = useAIConversations()
   const { data: servers = [] } = useServers()
@@ -79,9 +81,22 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
   const { data: convData } = useAIConversation(activeConvId)
 
   const [optimisticMessages, setOptimisticMessages] = useState<AIMessage[]>([])
+
   const messages = useMemo(() => {
-    const base = convData?.messages ?? []
-    return activeConvId ? [...base, ...optimisticMessages] : optimisticMessages
+    const base = (convData?.messages ?? []).filter((m) => m.content && m.content.trim() !== '')
+    if (!activeConvId) {
+      return optimisticMessages.filter((m) => m.content && m.content.trim() !== '')
+    }
+
+    // Filter out any optimistic messages that already exist in base to prevent duplicate rendering
+    const pendingOptimistic = optimisticMessages.filter((opt) => {
+      if (!opt.content || opt.content.trim() === '') return false
+      return !base.some(
+        (b) => b.role === opt.role && b.content.trim() === opt.content.trim(),
+      )
+    })
+
+    return [...base, ...pendingOptimistic]
   }, [activeConvId, convData?.messages, optimisticMessages])
 
   const [inputPrompt, setInputPrompt] = useState('')
@@ -200,6 +215,7 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
       let accumulatedText = ''
       let detectedAction: SafeguardAction | null = null
       let assignedConvId = activeConvId
+      let streamError = ''
 
       let buffer = ''
       while (true) {
@@ -238,7 +254,8 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
                 detectedAction = dataObj as SafeguardAction
                 setPendingAction(detectedAction)
               } else if (currentEvent === 'error') {
-                toast.error(dataObj.message || 'Stream error')
+                streamError = dataObj.message || 'Stream error'
+                toast.error(streamError)
               }
             } catch {
               // ignore invalid chunk frames
@@ -247,24 +264,51 @@ export function ChatWindow({ initialServerId, initialDeploymentId }: ChatWindowP
         }
       }
 
-      const finalAssistantMsg: AIMessage = {
-        id: `asst-${Date.now()}`,
-        conversation_id: assignedConvId || '',
-        role: 'assistant',
-        content: accumulatedText,
-        metadata: detectedAction ? { safeguard_action: detectedAction } : undefined,
-        created_at: new Date().toISOString(),
+      if (accumulatedText.trim()) {
+        const finalAssistantMsg: AIMessage = {
+          id: `asst-${Date.now()}`,
+          conversation_id: assignedConvId || '',
+          role: 'assistant',
+          content: accumulatedText.trim(),
+          metadata: detectedAction ? { safeguard_action: detectedAction } : undefined,
+          created_at: new Date().toISOString(),
+        }
+        setOptimisticMessages((prev) => [...prev, finalAssistantMsg])
+      } else if (streamError) {
+        const errorAssistantMsg: AIMessage = {
+          id: `asst-err-${Date.now()}`,
+          conversation_id: assignedConvId || '',
+          role: 'assistant',
+          content: `⚠️ **AI Provider Error**: ${streamError}`,
+          created_at: new Date().toISOString(),
+        }
+        setOptimisticMessages((prev) => [...prev, errorAssistantMsg])
       }
 
-      setOptimisticMessages((prev) => [...prev, finalAssistantMsg])
       setStreamingContent('')
       setPendingAction(null)
+      if (assignedConvId) {
+        await queryClient.invalidateQueries({
+          queryKey: ['ai', 'conversations', assignedConvId],
+        })
+        setOptimisticMessages([])
+      }
       refetchConvs()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error occurred while communicating with AI Assistant'
       toast.error(msg)
+      const errorMsg: AIMessage = {
+        id: `asst-err-${Date.now()}`,
+        conversation_id: activeConvId || '',
+        role: 'assistant',
+        content: `⚠️ **Request Failed**: ${msg}`,
+        created_at: new Date().toISOString(),
+      }
+      setOptimisticMessages((prev) => [...prev, errorMsg])
     } finally {
       setIsStreaming(false)
+      setStreamingContent('')
+      setPendingAction(null)
     }
   }
 

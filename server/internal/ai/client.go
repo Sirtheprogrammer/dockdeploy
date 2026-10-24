@@ -254,7 +254,8 @@ func (c *Client) streamCLIAgent(
 		if cmdName == "" {
 			return fmt.Errorf("ai: antigravity CLI ('agy') not found on system")
 		}
-		args = []string{"-p", prompt, "--print-timeout", "3m", "--dangerously-skip-permissions"}
+		// Flags must precede positional arguments in Go's flag package
+		args = []string{"--dangerously-skip-permissions", "--print-timeout", "3m", "-p", prompt}
 
 	case "claude-code":
 		cmdName = findBinary("claude")
@@ -288,6 +289,9 @@ func (c *Client) streamCLIAgent(
 	}
 
 	execCmd := exec.CommandContext(ctx, cmdName, args...)
+	var stderrBuf bytes.Buffer
+	execCmd.Stderr = &stderrBuf
+
 	stdout, err := execCmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("ai: create stdout pipe: %w", err)
@@ -320,6 +324,10 @@ func (c *Client) streamCLIAgent(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		stderrMsg := strings.TrimSpace(stderrBuf.String())
+		if stderrMsg != "" {
+			return fmt.Errorf("ai: %s failed: %w (%s)", cmdName, err, stderrMsg)
+		}
 		return fmt.Errorf("ai: %s exited with error: %w", cmdName, err)
 	}
 
@@ -333,6 +341,13 @@ func (c *Client) streamOpenAICompatible(
 	opts StreamOptions,
 	onChunk func(chunk string) error,
 ) error {
+	p := normalizeProvider(opts.Provider)
+	// Ensure /v1 path for Ollama, LM Studio, LocalAI if omitted by user
+	if (p == "ollama" || p == "lmstudio" || p == "localai" || p == "custom") &&
+		!strings.Contains(baseURL, "/v1") {
+		baseURL = baseURL + "/v1"
+	}
+
 	endpoint := baseURL + "/chat/completions"
 
 	type reqMsg struct {
@@ -409,11 +424,21 @@ func (c *Client) streamOpenAICompatible(
 		var chunk struct {
 			Choices []struct {
 				Delta struct {
-					Content string `json:"content"`
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					Text             string `json:"text"`
 				} `json:"delta"`
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+				Text         string  `json:"text"`
 				FinishReason *string `json:"finish_reason"`
 			} `json:"choices"`
-			Error *struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Response string `json:"response"`
+			Error    *struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
@@ -426,12 +451,29 @@ func (c *Client) streamOpenAICompatible(
 			return errors.New(chunk.Error.Message)
 		}
 
+		var text string
 		if len(chunk.Choices) > 0 {
-			content := chunk.Choices[0].Delta.Content
-			if content != "" {
-				if err := onChunk(content); err != nil {
-					return err
-				}
+			c0 := chunk.Choices[0]
+			if c0.Delta.Content != "" {
+				text = c0.Delta.Content
+			} else if c0.Delta.ReasoningContent != "" {
+				text = c0.Delta.ReasoningContent
+			} else if c0.Delta.Text != "" {
+				text = c0.Delta.Text
+			} else if c0.Message.Content != "" {
+				text = c0.Message.Content
+			} else if c0.Text != "" {
+				text = c0.Text
+			}
+		} else if chunk.Message.Content != "" {
+			text = chunk.Message.Content
+		} else if chunk.Response != "" {
+			text = chunk.Response
+		}
+
+		if text != "" {
+			if err := onChunk(text); err != nil {
+				return err
 			}
 		}
 	}

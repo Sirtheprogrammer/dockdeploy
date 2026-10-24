@@ -2413,7 +2413,7 @@ func (s *sqliteStore) GetAIConversation(ctx context.Context, conversationID, use
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, conversation_id, role, content, metadata, created_at
 		FROM ai_messages
-		WHERE conversation_id = $1
+		WHERE conversation_id = $1 AND trim(content) != ''
 		ORDER BY created_at ASC`, conversationID)
 	if err != nil {
 		return nil, nil, wrapSQLite("store: list ai messages", err)
@@ -2464,6 +2464,9 @@ func (s *sqliteStore) UpdateAIConversationTitle(ctx context.Context, conversatio
 }
 
 func (s *sqliteStore) AddAIMessage(ctx context.Context, conversationID, role, content string, metadata json.RawMessage) (*AIMessage, error) {
+	if strings.TrimSpace(content) == "" {
+		return nil, errors.New("store: message content cannot be empty")
+	}
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
