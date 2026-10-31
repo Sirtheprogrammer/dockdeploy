@@ -79,7 +79,16 @@ func (s *Server) identify(r *http.Request) *Identity {
 	ctx := r.Context()
 	log := LoggerFrom(ctx)
 
-	if token, ok := auth.ParseBearer(r.Header.Get("Authorization")); ok {
+	var token string
+	if bearer, ok := auth.ParseBearer(r.Header.Get("Authorization")); ok {
+		token = bearer
+	} else if qToken := r.URL.Query().Get("token"); qToken != "" {
+		token = qToken
+	} else if qKey := r.URL.Query().Get("api_key"); qKey != "" {
+		token = qKey
+	}
+
+	if token != "" {
 		found, err := s.Store.APITokenByHash(ctx, s.Hasher.Hash(token))
 		if err != nil {
 			if !errors.Is(err, store.ErrNotFound) {

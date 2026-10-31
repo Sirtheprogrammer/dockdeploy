@@ -6,6 +6,7 @@ import { AIPopup } from '@/routes/AIPopup'
 import { AcceptInvite } from '@/routes/AcceptInvite'
 import { DeploymentDetail } from '@/routes/DeploymentDetail'
 import { Deployments } from '@/routes/Deployments'
+import { Docs } from '@/routes/Docs'
 import { Domains } from '@/routes/Domains'
 import { Login } from '@/routes/Login'
 import { NotFound } from '@/routes/NotFound'
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="deployments" element={<Deployments />} />
           <Route path="deployments/:deploymentID" element={<DeploymentDetail />} />
           <Route path="domains" element={<Domains />} />
+          <Route path="docs" element={<Docs />} />
 
           {/* Users and Audit are admin-only. The tabs are hidden for other
               roles and the API refuses them regardless, so a direct visit

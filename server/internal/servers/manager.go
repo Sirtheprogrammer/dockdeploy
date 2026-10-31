@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/dockerx"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/sshx"
@@ -117,6 +118,35 @@ func (m *Manager) Probe(ctx context.Context, server *store.Server) (*sshx.Capabi
 		m.log.Warn("record probe result", "server", server.ID, "error", err)
 	}
 	return caps, nil
+}
+
+// RunCommand executes a shell command on the target server. If elevated is true,
+// it executes the command using the server's configured sudo mode or provided password.
+func (m *Manager) RunCommand(ctx context.Context, server *store.Server, cmd string, elevated bool, sudoPasswords ...string) (sshx.Result, error) {
+	conn, err := m.Connect(ctx, server)
+	if err != nil {
+		return sshx.Result{}, err
+	}
+	defer conn.Release()
+
+	if !elevated {
+		return conn.Run(ctx, cmd)
+	}
+
+	sudoPassword := ""
+	if len(sudoPasswords) > 0 {
+		sudoPassword = sudoPasswords[0]
+	}
+	return m.runSudo(ctx, server, conn, sudoPassword, cmd)
+}
+
+// RunCommandInDir executes a shell command inside a specified directory on the target server.
+func (m *Manager) RunCommandInDir(ctx context.Context, server *store.Server, dir, cmd string, elevated bool, sudoPasswords ...string) (sshx.Result, error) {
+	fullCmd := cmd
+	if strings.TrimSpace(dir) != "" {
+		fullCmd = fmt.Sprintf("cd %s && %s", shellQuote(dir), cmd)
+	}
+	return m.RunCommand(ctx, server, fullCmd, elevated, sudoPasswords...)
 }
 
 // Evict drops a server's pooled connection. Call after changing its address,

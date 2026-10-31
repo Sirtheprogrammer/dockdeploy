@@ -1,4 +1,4 @@
-import { Boxes, Globe, LayoutDashboard, Menu, Rocket, Server, Settings, X } from 'lucide-react'
+import { BookOpen, Boxes, Globe, LayoutDashboard, Menu, Rocket, Server, Settings, X } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/servers', label: 'Servers', icon: Server },
   { to: '/deployments', label: 'Deployments', icon: Rocket },
   { to: '/domains', label: 'Domains', icon: Globe },
+  { to: '/docs', label: 'Docs & MCP', icon: BookOpen },
   { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
 

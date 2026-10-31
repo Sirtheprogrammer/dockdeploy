@@ -274,6 +274,15 @@ func newLogger(cfg *config.Config) *slog.Logger {
 }
 
 func runMCP() error {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	dbFlag := fs.String("db", "", "Path to SQLite database file or postgres:// URL (default dockdeploy.db, or $DATABASE_URL)")
+	if len(os.Args) > 2 {
+		_ = fs.Parse(os.Args[2:])
+		if *dbFlag != "" {
+			os.Setenv("DATABASE_URL", *dbFlag)
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err

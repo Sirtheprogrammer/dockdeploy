@@ -83,8 +83,13 @@ type StorageScanResult struct {
 	TopLargeFiles  []StorageItem `json:"top_large_files"`
 }
 
-func shellQuote(s string) string {
+// ShellQuote quotes a string safely for inclusion in POSIX shell command lines.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func shellQuote(s string) string {
+	return ShellQuote(s)
 }
 
 func (m *Manager) runSudo(ctx context.Context, server *store.Server, conn *sshx.Conn, sudoPasswordOverride, cmd string) (sshx.Result, error) {
