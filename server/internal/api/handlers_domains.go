@@ -265,8 +265,8 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created, req.SudoPassword); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
 					ConfigRendered: &rendered,
-					Status:        store.DomainStatusError,
-					StatusMessage: deployErr.Error(),
+					Status:         store.DomainStatusError,
+					StatusMessage:  deployErr.Error(),
 				})
 			} else {
 				// Attempt SSL issuance
@@ -278,8 +278,8 @@ func (s *Server) handleCreateDomain(w http.ResponseWriter, r *http.Request) erro
 			if _, deployErr := s.Nginx.Deploy(r.Context(), server, created, req.SudoPassword); deployErr != nil {
 				_ = s.Store.UpdateDomainStatus(r.Context(), created.ID, store.UpdateDomainParams{
 					ConfigRendered: &rendered,
-					Status:        store.DomainStatusError,
-					StatusMessage: deployErr.Error(),
+					Status:         store.DomainStatusError,
+					StatusMessage:  deployErr.Error(),
 				})
 			}
 		}

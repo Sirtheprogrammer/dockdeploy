@@ -261,27 +261,27 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // MCP Protocol
   {
     method: 'POST',
-    path: '/api/v1/mcp',
+    path: '/api/mcp',
     title: 'Model Context Protocol JSON-RPC',
     category: 'Model Context Protocol (MCP)',
-    permission: 'server:read',
-    description: 'Executes MCP 2024-11-05 protocol requests (initialize, ping, tools/list, tools/call, resources/list, resources/read, prompts/list, prompts/get). Supports single requests and batch JSON arrays.',
+    permission: 'self (per-tool role checks)',
+    description: 'Streamable HTTP MCP endpoint (protocol 2025-06-18, 2025-03-26 and 2024-11-05). Handles initialize, ping, tools/list, tools/call, resources/list, resources/read, prompts/list and prompts/get, as single requests or batch arrays. Each tool requires the same permission as its REST equivalent: viewers only see read-only tools, members can operate containers and deploy, and members are limited to servers they were granted.',
     requestBody: `{\n  "jsonrpc": "2.0",\n  "id": 1,\n  "method": "tools/call",\n  "params": {\n    "name": "dockdeploy_exec_command",\n    "arguments": {\n      "command": "uptime"\n    }\n  }\n}`,
     responseBody: `{\n  "jsonrpc": "2.0",\n  "id": 1,\n  "result": {\n    "content": [\n      {\n        "type": "text",\n        "text": "Command executed on **Local Server** (exit: 0)..."\n      }\n    ]\n  }\n}`,
   },
   {
     method: 'GET',
-    path: '/api/v1/mcp',
-    title: 'MCP Server-Sent Events (SSE) Endpoint',
+    path: '/api/mcp',
+    title: 'MCP Endpoint Status',
     category: 'Model Context Protocol (MCP)',
-    permission: 'server:read',
-    description: 'Connects AI clients via Server-Sent Events. Pass header "Accept: text/event-stream" or query param "?token=<API_TOKEN>". Emits endpoint discovery event.',
-    responseBody: `event: endpoint\ndata: /api/v1/mcp?token=YOUR_API_TOKEN\n\n`,
+    permission: 'self',
+    description: 'Returns the supported transport and protocol versions. A GET with "Accept: text/event-stream" returns 405, as the streamable HTTP spec allows, because dockdeploy never pushes server-initiated messages. Clients then continue over POST.',
+    responseBody: `{\n  "service": "dockdeploy-mcp",\n  "status": "ok",\n  "transport": "streamable-http",\n  "protocolVersion": "2025-06-18"\n}`,
   },
   // Servers
   {
     method: 'GET',
-    path: '/api/v1/servers',
+    path: '/api/servers',
     title: 'List Servers',
     category: 'Servers',
     permission: 'server:read',
@@ -290,7 +290,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers',
+    path: '/api/servers',
     title: 'Create Server',
     category: 'Servers',
     permission: 'server:write',
@@ -299,7 +299,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}',
+    path: '/api/servers/{serverID}',
     title: 'Get Server Details',
     category: 'Servers',
     permission: 'server:read',
@@ -307,7 +307,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers/{serverID}/probe',
+    path: '/api/servers/{serverID}/probe',
     title: 'Probe Server',
     category: 'Servers',
     permission: 'server:read',
@@ -315,7 +315,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/metrics',
+    path: '/api/servers/{serverID}/metrics',
     title: 'Server Metrics',
     category: 'Servers',
     permission: 'server:read',
@@ -324,7 +324,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/security',
+    path: '/api/servers/{serverID}/security',
     title: 'Server Security Audit',
     category: 'Security Audits',
     permission: 'server:read',
@@ -333,7 +333,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers/{serverID}/security/scan',
+    path: '/api/servers/{serverID}/security/scan',
     title: 'Trigger Security Scan',
     category: 'Security Audits',
     permission: 'server:read',
@@ -341,7 +341,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers/{serverID}/exec-root',
+    path: '/api/servers/{serverID}/exec-root',
     title: 'Execute Root Command',
     category: 'Servers',
     permission: 'server:write',
@@ -351,7 +351,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // Containers
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/containers',
+    path: '/api/servers/{serverID}/containers',
     title: 'List Containers',
     category: 'Containers',
     permission: 'server:read',
@@ -359,7 +359,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/containers/{containerID}/logs',
+    path: '/api/servers/{serverID}/containers/{containerID}/logs',
     title: 'Container Logs',
     category: 'Containers',
     permission: 'server:read',
@@ -367,7 +367,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers/{serverID}/containers/{containerID}/actions',
+    path: '/api/servers/{serverID}/containers/{containerID}/actions',
     title: 'Container Action',
     category: 'Containers',
     permission: 'container:operate',
@@ -376,7 +376,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/servers/{serverID}/docker/prune',
+    path: '/api/servers/{serverID}/docker/prune',
     title: 'Prune Docker Objects',
     category: 'Containers',
     permission: 'container:operate',
@@ -386,7 +386,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // Files
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/files',
+    path: '/api/servers/{serverID}/files',
     title: 'List Files & Directories',
     category: 'Files',
     permission: 'server:read',
@@ -394,7 +394,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/servers/{serverID}/files/content',
+    path: '/api/servers/{serverID}/files/content',
     title: 'Read File Content',
     category: 'Files',
     permission: 'server:read',
@@ -402,7 +402,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'PUT',
-    path: '/api/v1/servers/{serverID}/files/content',
+    path: '/api/servers/{serverID}/files/content',
     title: 'Save File Content',
     category: 'Files',
     permission: 'server:write',
@@ -412,7 +412,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // Deployments
   {
     method: 'GET',
-    path: '/api/v1/deployments',
+    path: '/api/deployments',
     title: 'List Deployments',
     category: 'Deployments',
     permission: 'deployment:read',
@@ -420,7 +420,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/deployments',
+    path: '/api/deployments',
     title: 'Create Deployment',
     category: 'Deployments',
     permission: 'deployment:write',
@@ -429,7 +429,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/deployments/{deploymentID}/runs',
+    path: '/api/deployments/{deploymentID}/runs',
     title: 'Trigger Deployment Run',
     category: 'Deployments',
     permission: 'deployment:deploy',
@@ -439,7 +439,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'GET',
-    path: '/api/v1/deployments/{deploymentID}/runs/{runID}/logs',
+    path: '/api/deployments/{deploymentID}/runs/{runID}/logs',
     title: 'Deployment Run Logs',
     category: 'Deployments',
     permission: 'deployment:read',
@@ -448,7 +448,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // Domains
   {
     method: 'GET',
-    path: '/api/v1/domains',
+    path: '/api/domains',
     title: 'List Domains',
     category: 'Domains',
     permission: 'domain:read',
@@ -456,7 +456,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/domains/{domainID}/ssl',
+    path: '/api/domains/{domainID}/ssl',
     title: 'Issue SSL Certificate',
     category: 'Domains',
     permission: 'domain:write',
@@ -464,7 +464,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/domains/{domainID}/sync',
+    path: '/api/domains/{domainID}/sync',
     title: 'Sync Nginx VHost',
     category: 'Domains',
     permission: 'domain:write',
@@ -473,7 +473,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   // Tokens
   {
     method: 'GET',
-    path: '/api/v1/tokens',
+    path: '/api/tokens',
     title: 'List API Tokens',
     category: 'API Tokens',
     permission: 'self',
@@ -481,7 +481,7 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
   {
     method: 'POST',
-    path: '/api/v1/tokens',
+    path: '/api/tokens',
     title: 'Create API Token',
     category: 'API Tokens',
     permission: 'self',
@@ -568,7 +568,7 @@ export function Docs() {
                 <div>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Bot className="size-5 text-primary" />
-                    Model Context Protocol (MCP 2024-11-05) Tools
+                    Model Context Protocol (MCP) Tools
                   </CardTitle>
                   <CardDescription>
                     dockdeploy implements native MCP tooling, enabling Claude Desktop, Cursor, Antigravity, and other agents to operate your fleet.
@@ -579,7 +579,7 @@ export function Docs() {
                     16 Tools Available
                   </Badge>
                   <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400">
-                    Stdio & HTTP/SSE
+                    Stdio & Streamable HTTP
                   </Badge>
                 </div>
               </div>
@@ -623,7 +623,7 @@ export function Docs() {
                         className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer select-none"
                         onClick={() => setExpandedTool(isExpanded ? null : tool.name)}
                       >
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2.5">
                           <code className="text-sm font-semibold text-primary">{tool.name}</code>
                           <Badge variant="outline" className="text-[11px]">
                             {tool.category}
@@ -702,7 +702,7 @@ export function Docs() {
                 Connecting Remote MCP to Your AI Coding Agents
               </CardTitle>
               <CardDescription>
-                When dockdeploy is deployed on a remote server, external AI assistants can connect via Direct HTTP/SSE or Stdio through an SSH tunnel.
+                When dockdeploy is deployed on a remote server, external AI assistants can connect over streamable HTTP or over stdio through an SSH tunnel.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-8">
@@ -715,36 +715,43 @@ export function Docs() {
                   <h3 className="text-sm font-semibold">Generate a Dedicated API Token</h3>
                 </div>
                 <p className="text-xs sm:text-sm text-muted-foreground pl-8">
-                  For HTTP/SSE connections, create an API token with server read/write permissions from the{' '}
+                  For HTTP connections, create an API token from the{' '}
                   <Link to="/settings/tokens" className="text-primary hover:underline font-medium">
                     API Tokens Settings page
                   </Link>
-                  . Tokens can be passed as a header (<code className="text-xs">Authorization: Bearer dd_tok_...</code>) or as a URL query parameter (<code className="text-xs">?token=dd_tok_...</code>).
+                  . A token acts with its owner&apos;s role: viewers only get read-only tools, while members and admins can also run commands, operate containers and trigger deployments. Send it as a header (<code className="text-xs">Authorization: Bearer ddp_...</code>). For clients that cannot set headers, the MCP endpoint (and only that endpoint) also accepts <code className="text-xs">?token=ddp_...</code>.
                 </p>
               </div>
 
-              {/* Method A: Direct HTTP / SSE */}
+              {/* Method A: Streamable HTTP */}
               <div className="space-y-4 rounded-xl border border-border/80 bg-background/50 p-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Globe className="size-4.5 text-sky-400" />
-                    <h3 className="text-sm font-semibold">Method A: Direct HTTP / SSE (Cursor, Zed, Antigravity)</h3>
+                    <h3 className="text-sm font-semibold">Method A: Streamable HTTP (Claude Code, Cursor, VS Code)</h3>
                   </div>
                   <Badge variant="outline" className="border-sky-500/40 text-sky-400">
                     Recommended for IDEs
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Dockdeploy serves the MCP endpoint directly at <code className="text-xs">{originUrl}/api/v1/mcp</code>.
+                  Dockdeploy serves the MCP endpoint directly at <code className="text-xs">{originUrl}/api/mcp</code>.
                 </p>
 
                 <div className="space-y-3 pt-2">
+                  <h4 className="text-xs font-semibold text-zinc-300">Claude Code:</h4>
+                  <CodeSnippet
+                    code={`claude mcp add --transport http dockdeploy ${originUrl}/api/mcp \\
+  --header "Authorization: Bearer YOUR_DOCKDEPLOY_API_TOKEN"`}
+                    language="bash"
+                  />
+
                   <h4 className="text-xs font-semibold text-zinc-300">Cursor Configuration (<code className="text-xs">.cursor/mcp.json</code>):</h4>
                   <CodeSnippet
                     code={`{
   "mcpServers": {
     "dockdeploy": {
-      "url": "${originUrl}/api/v1/mcp",
+      "url": "${originUrl}/api/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_DOCKDEPLOY_API_TOKEN"
       }
@@ -754,9 +761,9 @@ export function Docs() {
                     language="json"
                   />
 
-                  <h4 className="text-xs font-semibold text-zinc-300">URL with Query Token (For SSE Clients):</h4>
+                  <h4 className="text-xs font-semibold text-zinc-300">URL with Query Token (for clients that cannot send headers):</h4>
                   <CodeSnippet
-                    code={`${originUrl}/api/v1/mcp?token=YOUR_DOCKDEPLOY_API_TOKEN`}
+                    code={`${originUrl}/api/mcp?token=YOUR_DOCKDEPLOY_API_TOKEN`}
                     language="text"
                   />
                 </div>
@@ -774,7 +781,7 @@ export function Docs() {
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Claude Desktop supports stdio clients natively. Use <code className="text-xs">@modelcontextprotocol/server-proxy</code> to bridge Claude Desktop to your remote dockdeploy HTTP endpoint:
+                  Claude Desktop launches stdio servers from its config file. Use <code className="text-xs">mcp-remote</code> to bridge it to your remote dockdeploy HTTP endpoint:
                 </p>
 
                 <CodeSnippet
@@ -784,10 +791,10 @@ export function Docs() {
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-proxy",
-        "${originUrl}/api/v1/mcp",
+        "mcp-remote",
+        "${originUrl}/api/mcp",
         "--header",
-        "Authorization: Bearer YOUR_DOCKDEPLOY_API_TOKEN"
+        "Authorization:Bearer YOUR_DOCKDEPLOY_API_TOKEN"
       ]
     }
   }
@@ -838,7 +845,7 @@ export function Docs() {
       "args": [
         "-T",
         "deploy@your-server-ip",
-        "docker exec -i dockdeploy /app/dockdeploy mcp"
+        "docker exec -i dockdeploy-app-1 dockdeploy mcp"
       ]
     }
   }
@@ -862,12 +869,12 @@ export function Docs() {
                     REST API Reference
                   </CardTitle>
                   <CardDescription>
-                    All API endpoints are mounted at <code className="text-xs">/api/v1</code> and authenticated with Bearer tokens or browser sessions.
+                    All API endpoints are mounted at <code className="text-xs">/api</code> and authenticated with Bearer tokens or browser sessions.
                   </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="text-xs">
-                    Base: /api/v1
+                    Base: /api
                   </Badge>
                 </div>
               </div>
@@ -987,7 +994,7 @@ export function Docs() {
                   Call the MCP endpoint directly to execute shell diagnostics:
                 </p>
                 <CodeSnippet
-                  code={`curl -X POST "${originUrl}/api/v1/mcp" \\
+                  code={`curl -X POST "${originUrl}/api/mcp" \\
   -H "Authorization: Bearer YOUR_API_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -1012,7 +1019,7 @@ export function Docs() {
                   Enqueue a build run for deployment ID <code className="text-xs">dep_123</code>:
                 </p>
                 <CodeSnippet
-                  code={`curl -X POST "${originUrl}/api/v1/deployments/dep_123/runs" \\
+                  code={`curl -X POST "${originUrl}/api/deployments/dep_123/runs" \\
   -H "Authorization: Bearer YOUR_API_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{}'`}
@@ -1026,7 +1033,7 @@ export function Docs() {
                   Execute container lifecycle operation:
                 </p>
                 <CodeSnippet
-                  code={`curl -X POST "${originUrl}/api/v1/servers/srv_123/containers/web-app/actions" \\
+                  code={`curl -X POST "${originUrl}/api/servers/srv_123/containers/web-app/actions" \\
   -H "Authorization: Bearer YOUR_API_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"action": "restart"}'`}
@@ -1040,7 +1047,7 @@ export function Docs() {
                   Tail recent log output:
                 </p>
                 <CodeSnippet
-                  code={`curl "${originUrl}/api/v1/servers/srv_123/containers/web-app/logs?tail=100" \\
+                  code={`curl "${originUrl}/api/servers/srv_123/containers/web-app/logs?tail=100" \\
   -H "Authorization: Bearer YOUR_API_TOKEN"`}
                   language="bash"
                 />
@@ -1051,7 +1058,7 @@ export function Docs() {
                 <CodeSnippet
                   code={`import requests
 
-URL = "${originUrl}/api/v1/mcp"
+URL = "${originUrl}/api/mcp"
 TOKEN = "YOUR_API_TOKEN"
 
 payload = {

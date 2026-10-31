@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
 )
 
 func TestMCPServerToolsList(t *testing.T) {
@@ -193,17 +195,14 @@ func TestMCPHTTPHandler(t *testing.T) {
 	srv := NewServer(nil, nil, nil)
 	handler := srv.HTTPHandler()
 
-	// 1. Test GET SSE endpoint
+	// 1. GET asking for an event stream is refused per streamable HTTP.
 	reqGet := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	reqGet.Header.Set("Accept", "text/event-stream")
 	recGet := httptest.NewRecorder()
 	handler.ServeHTTP(recGet, reqGet)
 
-	if recGet.Code != http.StatusOK {
-		t.Fatalf("expected 200, got: %d", recGet.Code)
-	}
-	if !strings.Contains(recGet.Body.String(), "event: endpoint") {
-		t.Errorf("expected SSE endpoint event, got: %s", recGet.Body.String())
+	if recGet.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for SSE GET, got: %d", recGet.Code)
 	}
 
 	// 2. Test POST JSON-RPC single request
@@ -238,5 +237,103 @@ func TestMCPHTTPHandler(t *testing.T) {
 	}
 	if len(batchResp) != 2 {
 		t.Errorf("expected 2 batch responses, got: %d", len(batchResp))
+	}
+}
+
+func TestMCPHTTPNotificationsGetNoBody(t *testing.T) {
+	handler := NewServer(nil, nil, nil).HTTPHandler()
+
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`[{"jsonrpc":"2.0","method":"notifications/initialized"}]`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Errorf("%s: expected 202, got %d", body, rec.Code)
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("%s: expected empty body, got %q", body, rec.Body.String())
+		}
+	}
+}
+
+func TestMCPProtocolNegotiation(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	cases := map[string]string{
+		"2024-11-05": "2024-11-05",
+		"2025-03-26": "2025-03-26",
+		"2025-06-18": "2025-06-18",
+		"1999-01-01": latestProtocolVersion,
+		"":           latestProtocolVersion,
+	}
+	for requested, want := range cases {
+		resp := srv.Handle(context.Background(), JSONRPCRequest{
+			JSONRPC: "2.0", ID: 1, Method: "initialize",
+			Params: json.RawMessage(`{"protocolVersion":"` + requested + `"}`),
+		})
+		got := resp.Result.(map[string]any)["protocolVersion"]
+		if got != want {
+			t.Errorf("requested %q: got %v, want %q", requested, got, want)
+		}
+	}
+}
+
+func toolNames(t *testing.T, resp JSONRPCResponse) map[string]bool {
+	t.Helper()
+	tools := resp.Result.(map[string]any)["tools"].([]map[string]any)
+	names := map[string]bool{}
+	for _, tool := range tools {
+		names[tool["name"].(string)] = true
+	}
+	return names
+}
+
+func TestMCPToolsFilteredByRole(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	list := JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: "tools/list"}
+
+	viewer := WithCaller(context.Background(), &Caller{UserID: "u1", Role: auth.RoleViewer})
+	names := toolNames(t, srv.Handle(viewer, list))
+	for _, mutating := range []string{
+		"dockdeploy_exec_command", "dockdeploy_docker_exec", "dockdeploy_write_file",
+		"dockdeploy_container_action", "dockdeploy_restart_container", "dockdeploy_trigger_deployment",
+	} {
+		if names[mutating] {
+			t.Errorf("viewer should not see %s", mutating)
+		}
+	}
+	if !names["dockdeploy_list_servers"] {
+		t.Errorf("viewer should see read-only tools")
+	}
+
+	admin := WithCaller(context.Background(), &Caller{UserID: "u2", Role: auth.RoleAdmin})
+	if got := len(toolNames(t, srv.Handle(admin, list))); got != len(toolPermissions) {
+		t.Errorf("admin should see all %d tools, got %d", len(toolPermissions), got)
+	}
+
+	// Every defined tool must declare a permission, or it would be hidden.
+	for _, tool := range srv.toolDefinitions() {
+		if _, ok := toolPermissions[tool["name"].(string)]; !ok {
+			t.Errorf("tool %s has no permission mapping", tool["name"])
+		}
+	}
+}
+
+func TestMCPViewerCannotExec(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	viewer := WithCaller(context.Background(), &Caller{UserID: "u1", Role: auth.RoleViewer})
+	resp := srv.Handle(viewer, JSONRPCRequest{
+		JSONRPC: "2.0", ID: 1, Method: "tools/call",
+		Params: json.RawMessage(`{"name":"dockdeploy_exec_command","arguments":{"command":"id"}}`),
+	})
+	result := resp.Result.(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected isError for viewer exec, got %v", result)
+	}
+	text := result["content"].([]map[string]any)[0]["text"].(string)
+	if !strings.Contains(text, "does not allow") {
+		t.Errorf("unexpected error text: %s", text)
 	}
 }

@@ -239,10 +239,11 @@ func (s *Server) Routes() (http.Handler, error) {
 		})
 
 		api.guarded(http.MethodGet, "/audit", auth.PermAuditRead, s.handleListAudit)
-		api.guarded(http.MethodGet, "/mcp", auth.PermServerRead, s.handleMCP)
-		api.guarded(http.MethodPost, "/mcp", auth.PermServerRead, s.handleMCP)
-		api.guarded(http.MethodGet, "/mcp/sse", auth.PermServerRead, s.handleMCP)
-		api.guarded(http.MethodPost, "/mcp/messages", auth.PermServerRead, s.handleMCP)
+		// MCP (streamable HTTP). The route only requires a signed-in caller;
+		// each tool call is then checked against the caller's role and server
+		// grants inside the MCP server, mirroring the equivalent REST route.
+		api.guarded(http.MethodGet, "/mcp", auth.PermSelf, s.handleMCP)
+		api.guarded(http.MethodPost, "/mcp", auth.PermSelf, s.handleMCP)
 
 		api.router.NotFound(s.wrap(func(http.ResponseWriter, *http.Request) error {
 			return NotFound("No such endpoint.")

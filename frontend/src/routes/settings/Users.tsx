@@ -364,7 +364,7 @@ function PendingInvitations() {
 
 export function Users() {
   return (
-    <div className="grid max-w-5xl min-w-0 gap-4">
+    <div className="grid max-w-5xl min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <UsersTable />
       <PendingInvitations />
     </div>

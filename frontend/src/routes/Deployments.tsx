@@ -42,7 +42,7 @@ export function Deployments() {
         description="Applications built and run from a git repository or a compose file."
         actions={
           hasServers && canCreate ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"

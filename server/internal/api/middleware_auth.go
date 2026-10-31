@@ -75,6 +75,10 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 	})
 }
 
+func isMCPPath(p string) bool {
+	return p == "/api/mcp" || p == "/api/mcp/"
+}
+
 func (s *Server) identify(r *http.Request) *Identity {
 	ctx := r.Context()
 	log := LoggerFrom(ctx)
@@ -82,10 +86,15 @@ func (s *Server) identify(r *http.Request) *Identity {
 	var token string
 	if bearer, ok := auth.ParseBearer(r.Header.Get("Authorization")); ok {
 		token = bearer
-	} else if qToken := r.URL.Query().Get("token"); qToken != "" {
-		token = qToken
-	} else if qKey := r.URL.Query().Get("api_key"); qKey != "" {
-		token = qKey
+	} else if isMCPPath(r.URL.Path) {
+		// Some MCP clients cannot send headers, so the MCP endpoint alone
+		// accepts the token in the URL. Everywhere else it is refused: URLs
+		// end up in proxy logs, browser history and Referer headers.
+		if qToken := r.URL.Query().Get("token"); qToken != "" {
+			token = qToken
+		} else if qKey := r.URL.Query().Get("api_key"); qKey != "" {
+			token = qKey
+		}
 	}
 
 	if token != "" {

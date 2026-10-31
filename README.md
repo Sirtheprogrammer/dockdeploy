@@ -206,11 +206,16 @@ Nginx configuration changes on managed servers use a non-destructive 5-step safe
   - **LM Studio / LocalAI / vLLM**: OpenAI-compatible local endpoints.
 - **Zero API Key Requirement**: All local agents and models execute without requiring external API keys.
 - **Model Context Protocol (MCP) Server**: External agents can connect directly to your dockdeploy instance to inspect servers, retrieve container logs, restart services, and check system diagnostics:
-  - **Claude Code**: `claude mcp add dockdeploy -- ./dockdeploy mcp`
+  - **Claude Code (local, stdio)**: `claude mcp add dockdeploy -- ./dockdeploy mcp -db ./dockdeploy.db`
+  - **Claude Code (remote, HTTP)**: `claude mcp add --transport http dockdeploy https://your-host/api/mcp --header "Authorization: Bearer ddp_..."`
   - **Hermes Agent**: `hermes mcp add dockdeploy -- ./dockdeploy mcp`
   - **Antigravity CLI**: Configured via `~/.gemini/antigravity-cli/settings.json`
-  - **Cursor / VS Code**: Configured via `.cursor/mcp.json`
-  - **HTTP Agent API**: Direct JSON-RPC over `POST /api/mcp` with Bearer token authentication.
+  - **Cursor / VS Code**: Configured via `.cursor/mcp.json` with `"url": "https://your-host/api/mcp"` and an `Authorization` header
+  - **Claude Desktop**: bridge to the HTTP endpoint with `npx -y mcp-remote https://your-host/api/mcp --header "Authorization:Bearer ddp_..."`
+  - **Docker Compose deployment (stdio over SSH)**: `ssh -T you@host docker exec -i dockdeploy-app-1 dockdeploy mcp`
+  - **HTTP Agent API**: streamable HTTP JSON-RPC at `POST /api/mcp` (MCP 2025-06-18, 2025-03-26 and 2024-11-05), authenticated with an API token.
+
+  Over HTTP, every tool call is authorized with the token owner's role and server grants, the same as the REST API: viewers only get read-only tools (no shell, file writes, container actions or deploys). The stdio mode runs with full access, because anyone who can launch it already holds the database and encryption key.
 
 ---
 

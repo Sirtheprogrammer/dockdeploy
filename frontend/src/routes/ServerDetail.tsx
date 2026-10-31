@@ -114,7 +114,11 @@ export function ServerDetail() {
     <>
       <PageHeader
         title={server.data.name}
-        description={`${server.data.username}@${server.data.host}${server.data.port !== 22 ? `:${server.data.port}` : ''}`}
+        description={
+          server.data.auth_method === 'local'
+            ? `Local Docker host (${server.data.docker_socket || '/var/run/docker.sock'})`
+            : `${server.data.username}@${server.data.host}${server.data.port !== 22 ? `:${server.data.port}` : ''}`
+        }
         actions={
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
             {canWrite && !caps?.docker_socket_ok ? (
