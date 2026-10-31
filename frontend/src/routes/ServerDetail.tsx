@@ -29,6 +29,7 @@ import { ServerDatabaseBackupsTab } from '@/components/servers/ServerDatabaseBac
 import { LogViewer } from '@/components/servers/LogViewer'
 import { ServerFileBrowser } from '@/components/servers/ServerFileBrowser'
 import { ServerMetricsView } from '@/components/servers/ServerMetricsView'
+import { ServerSecurityTab } from '@/components/servers/ServerSecurityTab'
 import { ServerRootExecDialog } from '@/components/servers/ServerRootExecDialog'
 import { ServerStatusBadge } from '@/components/servers/ServerStatusBadge'
 import { ServerTerminal } from '@/components/servers/ServerTerminal'
@@ -242,6 +243,7 @@ export function ServerDetail() {
           <TabsList>
             <TabsTrigger value="containers">Containers</TabsTrigger>
             <TabsTrigger value="metrics">Metrics & Health</TabsTrigger>
+            <TabsTrigger value="security">Security & Audits</TabsTrigger>
             <TabsTrigger value="files">Files & Volumes</TabsTrigger>
             <TabsTrigger value="backups">Databases & Backups</TabsTrigger>
             <TabsTrigger value="images">Images</TabsTrigger>
@@ -263,6 +265,14 @@ export function ServerDetail() {
                 server={server.data}
                 active={tab === 'metrics'}
                 onLaunchTerminal={canTerminal ? () => setTerminalOpen(true) : undefined}
+              />
+            </ErrorBoundary>
+          </TabsContent>
+          <TabsContent value="security" className="pt-4">
+            <ErrorBoundary fallbackTitle="Could not display security audit">
+              <ServerSecurityTab
+                server={server.data}
+                canOperate={canOperate}
               />
             </ErrorBoundary>
           </TabsContent>

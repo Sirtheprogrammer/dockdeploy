@@ -235,6 +235,15 @@ const MCP_TOOLS: MCPToolDoc[] = [
     ],
     example: `{\n  "name": "dockdeploy_get_deployment_logs",\n  "arguments": {\n    "deployment_id": "dep_12345"\n  }\n}`,
   },
+  {
+    name: 'dockdeploy_security_audit',
+    category: 'Servers',
+    description: 'Inspect a server for active attack patterns, SSH brute-force attempts, exposed dangerous network ports (Redis, MySQL, unauthenticated Docker socket), Docker container privilege risks, and web exploit signatures.',
+    params: [
+      { name: 'server_id', type: 'string', required: false, description: 'Server ID (defaults to local or first server)' },
+    ],
+    example: `{\n  "name": "dockdeploy_security_audit",\n  "arguments": {}\n}`,
+  },
 ]
 
 interface APIEndpointDoc {
@@ -312,6 +321,23 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
     permission: 'server:read',
     description: 'Collects real-time CPU, RAM, disk, and load metrics from the target machine.',
     responseBody: `{\n  "cpu_percent": 18.5,\n  "memory_used_bytes": 4294967296,\n  "memory_total_bytes": 17179869184,\n  "disk_used_bytes": 42949672960,\n  "disk_total_bytes": 107374182400,\n  "docker_running": true,\n  "container_count": 8\n}`,
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/servers/{serverID}/security',
+    title: 'Server Security Audit',
+    category: 'Security Audits',
+    permission: 'server:read',
+    description: 'Runs an automated security inspection on the server: SSH brute-force attempts, exposed dangerous ports, Docker container privilege risks, and web exploit signatures.',
+    responseBody: `{\n  "server_id": "srv_123",\n  "score": 92,\n  "grade": "A",\n  "status": "secure",\n  "critical_count": 0,\n  "high_count": 0,\n  "findings": []\n}`,
+  },
+  {
+    method: 'POST',
+    path: '/api/v1/servers/{serverID}/security/scan',
+    title: 'Trigger Security Scan',
+    category: 'Security Audits',
+    permission: 'server:read',
+    description: 'Executes a fresh real-time security audit across the host server and returns updated vulnerability and attack findings.',
   },
   {
     method: 'POST',
@@ -464,8 +490,10 @@ const API_ENDPOINTS: APIEndpointDoc[] = [
   },
 ]
 
+type DocsTab = 'mcp' | 'api' | 'connect' | 'examples'
+
 export function Docs() {
-  const [activeTab, setActiveTab] = useState<'mcp' | 'api' | 'connect' | 'examples'>('mcp')
+  const [activeTab, setActiveTab] = useState<DocsTab>('mcp')
   const [toolSearch, setToolSearch] = useState('')
   const [toolCategory, setToolCategory] = useState<string>('All')
   const [apiSearch, setApiSearch] = useState('')
@@ -512,7 +540,7 @@ export function Docs() {
       />
 
       {/* Top Navigation Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as DocsTab)} className="space-y-6">
         <TabsList className="grid grid-cols-2 md:grid-cols-4 w-full h-auto p-1 bg-surface border border-border/80">
           <TabsTrigger value="mcp" className="gap-2 py-2.5 text-xs sm:text-sm">
             <Bot className="size-4" />

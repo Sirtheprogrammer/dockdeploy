@@ -767,6 +767,19 @@ func (s *Server) toolDefinitions() []map[string]any {
 				},
 			},
 		},
+		{
+			"name":        "dockdeploy_security_audit",
+			"description": "Inspect a server for active attack patterns, SSH brute-force attempts, exposed dangerous network ports (Redis, MySQL, unauthenticated Docker socket), Docker container privilege risks, and web exploit signatures.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"server_id": map[string]any{
+						"type":        "string",
+						"description": "Server ID (optional, defaults to local or first server)",
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -1313,6 +1326,52 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		}
 
 		return diag.SummaryMarkdown, nil
+
+	case "dockdeploy_security_audit":
+		serverID := getString(args, "server_id")
+		server, err := s.resolveServer(ctx, serverID)
+		if err != nil {
+			return "", err
+		}
+
+		audit, err := s.Servers.SecurityAudit(ctx, server)
+		if err != nil {
+			return "", fmt.Errorf("run security audit: %w", err)
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("## Security Audit Report: **%s** (`%s`)\n\n", server.Name, server.ID))
+		sb.WriteString(fmt.Sprintf("- **Score**: `%d/100` (Grade: `%s`)\n", audit.Score, audit.Grade))
+		sb.WriteString(fmt.Sprintf("- **Status**: `%s`\n", audit.Status))
+		sb.WriteString(fmt.Sprintf("- **Summary**: %s\n", audit.Summary))
+		sb.WriteString(fmt.Sprintf("- **Findings**: %d Critical, %d High, %d Medium, %d Low\n\n",
+			audit.CriticalCount, audit.HighCount, audit.MediumCount, audit.LowCount))
+
+		if len(audit.Findings) > 0 {
+			sb.WriteString("### Detected Vulnerabilities & Threats:\n\n")
+			for i, f := range audit.Findings {
+				sb.WriteString(fmt.Sprintf("%d. **[%s] %s**\n", i+1, strings.ToUpper(string(f.Severity)), f.Title))
+				sb.WriteString(fmt.Sprintf("   - *Description*: %s\n", f.Description))
+				sb.WriteString(fmt.Sprintf("   - *Evidence*: `%s`\n", f.Evidence))
+				sb.WriteString(fmt.Sprintf("   - *Remediation*: %s\n\n", f.Remediation))
+			}
+		} else {
+			sb.WriteString("✅ No security vulnerabilities or attack patterns detected.\n\n")
+		}
+
+		if audit.SSHAnalysis.FailedAttemptsCount > 0 {
+			sb.WriteString(fmt.Sprintf("### SSH Brute-Force Activity:\n- Failed Login Attempts: %d\n", audit.SSHAnalysis.FailedAttemptsCount))
+			if len(audit.SSHAnalysis.TopAttackerIPs) > 0 {
+				sb.WriteString("- Top Attacking IPs: ")
+				var ipStrs []string
+				for _, ip := range audit.SSHAnalysis.TopAttackerIPs {
+					ipStrs = append(ipStrs, fmt.Sprintf("%s (%d hits)", ip.IP, ip.Count))
+				}
+				sb.WriteString(strings.Join(ipStrs, ", ") + "\n\n")
+			}
+		}
+
+		return sb.String(), nil
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)

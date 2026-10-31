@@ -356,6 +356,24 @@ func (s *Server) handleServerMetrics(w http.ResponseWriter, r *http.Request) err
 	return JSON(w, s.Log, http.StatusOK, metrics)
 }
 
+func (s *Server) handleServerSecurityAudit(w http.ResponseWriter, r *http.Request) error {
+	server, err := s.requireServer(r)
+	if err != nil {
+		return err
+	}
+
+	audit, err := s.Servers.SecurityAudit(r.Context(), server)
+	if err != nil {
+		return Unavailable("Could not run security audit on %s: %v", server.Name, err).WithCause(err)
+	}
+
+	AuditResource(r.Context(), "servers", server.ID)
+	AuditMeta(r.Context(), "security_score", fmt.Sprintf("%d", audit.Score))
+	AuditMeta(r.Context(), "security_grade", audit.Grade)
+
+	return JSON(w, s.Log, http.StatusOK, audit)
+}
+
 // --- per-server access ---------------------------------------------------
 
 func (s *Server) handleListServerMembers(w http.ResponseWriter, r *http.Request) error {

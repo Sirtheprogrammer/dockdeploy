@@ -57,6 +57,7 @@ func TestMCPServerToolsList(t *testing.T) {
 		"dockdeploy_trigger_deployment",
 		"dockdeploy_get_deployment_logs",
 		"dockdeploy_server_diagnostics",
+		"dockdeploy_security_audit",
 	}
 
 	for _, expected := range expectedTools {

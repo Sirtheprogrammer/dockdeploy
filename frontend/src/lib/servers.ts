@@ -937,3 +937,106 @@ export function useDeleteDatabaseBackup(serverID: string) {
   })
 }
 
+// --- Security & Attack Pattern Audits ---------------------------------------
+
+export interface SecurityFinding {
+  id: string
+  title: string
+  category: string
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
+  description: string
+  evidence: string
+  remediation: string
+}
+
+export interface IPCount {
+  ip: string
+  count: number
+}
+
+export interface SSHAttackAnalysis {
+  failed_attempts_count: number
+  top_attacker_ips: IPCount[]
+  invalid_user_attempts: number
+  root_login_attempts: number
+  recent_attacks: string[]
+}
+
+export interface ExposedPort {
+  protocol: string
+  port: number
+  bind_addr: string
+  process: string
+  is_public: boolean
+  is_risky: boolean
+  risk_note: string
+}
+
+export interface ContainerSecurityRisk {
+  container_id: string
+  name: string
+  image: string
+  is_privileged: boolean
+  host_network: boolean
+  host_pid: boolean
+  root_user: boolean
+  socket_mounted: boolean
+  risks: string[]
+}
+
+export interface WebAttackSummary {
+  scans_detected: number
+  sqli_attempts: number
+  path_traversal_attempts: number
+  command_injection_attempts: number
+  recent_web_attacks: string[]
+}
+
+export interface SystemIntegritySummary {
+  firewall_status: string
+  suspicious_processes: string[]
+  world_writable_files: string[]
+  suid_binaries_count: number
+}
+
+export interface ServerSecurityAudit {
+  server_id: string
+  server_name: string
+  scanned_at: string
+  score: number
+  grade: string
+  status: 'secure' | 'warning' | 'critical'
+  summary: string
+  critical_count: number
+  high_count: number
+  medium_count: number
+  low_count: number
+  info_count: number
+  findings: SecurityFinding[]
+  ssh_analysis: SSHAttackAnalysis
+  exposed_ports: ExposedPort[]
+  container_risks: ContainerSecurityRisk[]
+  web_attacks: WebAttackSummary
+  system_integrity: SystemIntegritySummary
+}
+
+export function useServerSecurityAudit(serverID: string, options?: { enabled?: boolean }) {
+  return useQuery<ServerSecurityAudit, ApiError>({
+    queryKey: ['servers', serverID, 'security'],
+    queryFn: ({ signal }) => api.get<ServerSecurityAudit>(`/servers/${serverID}/security`, { signal }),
+    enabled: (options?.enabled ?? true) && serverID !== '',
+    staleTime: 60 * 1000,
+  })
+}
+
+export function useRunSecurityScan(serverID: string) {
+  const queryClient = useQueryClient()
+  return useMutation<ServerSecurityAudit, ApiError, void>({
+    mutationFn: () => api.post<ServerSecurityAudit>(`/servers/${serverID}/security/scan`),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['servers', serverID, 'security'], data)
+    },
+  })
+}
+
+
