@@ -19,6 +19,29 @@ import (
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
 
+const (
+	latestProtocolVersion = "2025-06-18"
+	// maxRequestBytes bounds a POSTed JSON-RPC body (write_file content
+	// included).
+	maxRequestBytes = 10 << 20
+)
+
+// supportedProtocolVersions lists MCP revisions this server speaks, newest
+// first. The tool, resource and prompt shapes used here are identical across
+// them.
+var supportedProtocolVersions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
+
+// negotiateProtocolVersion echoes the client's version when supported and
+// otherwise offers the newest one, as the lifecycle spec requires.
+func negotiateProtocolVersion(requested string) string {
+	for _, v := range supportedProtocolVersions {
+		if v == requested {
+			return v
+		}
+	}
+	return latestProtocolVersion
+}
+
 // JSONRPCRequest represents a standard JSON-RPC 2.0 request.
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -61,14 +84,47 @@ func NewServer(st *store.Store, sealer store.Sealer, mgr *servers.Manager) *Serv
 }
 
 // RunStdio serves the MCP protocol over standard input/output for CLI agents.
+//
+// It returns when stdin reaches EOF or ctx is cancelled. The latter matters:
+// MCP clients usually stop a stdio server with SIGTERM rather than closing
+// stdin, and a blocked read would otherwise keep the process alive forever.
 func (s *Server) RunStdio(ctx context.Context) error {
 	scanner := bufio.NewScanner(os.Stdin)
 	// Support payloads up to 10MB
 	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	scanner.Buffer(buf, maxRequestBytes)
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	lines := make(chan string)
+	scanErr := make(chan error, 1)
+	go func() {
+		defer close(lines)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+		scanErr <- scanner.Err()
+	}()
+
+	for {
+		var raw string
+		select {
+		case <-ctx.Done():
+			return nil
+		case l, ok := <-lines:
+			if !ok {
+				select {
+				case err := <-scanErr:
+					return err
+				default:
+					return nil
+				}
+			}
+			raw = l
+		}
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
@@ -111,8 +167,6 @@ func (s *Server) RunStdio(ctx context.Context) error {
 			s.sendStdio(resp)
 		}
 	}
-
-	return scanner.Err()
 }
 
 func (s *Server) sendStdio(payload any) {
@@ -128,28 +182,24 @@ func (s *Server) sendStdio(payload any) {
 // HTTPHandler returns an HTTP handler for web/network-based MCP clients.
 func (s *Server) HTTPHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Handle SSE (Server-Sent Events) discovery
 		if r.Method == http.MethodGet {
+			// Streamable HTTP: a GET asking for an event stream is how a client
+			// opens a channel for server-initiated messages. dockdeploy never
+			// sends any, and the spec says to answer 405 so the client simply
+			// carries on with POST. Holding a stream open (or emitting a legacy
+			// SSE "endpoint" event) makes clients reconnect in a loop.
 			if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-				// Emit endpoint event pointing to the POST handler with preserved query tokens
-				postURL := r.URL.Path
-				if r.URL.RawQuery != "" {
-					postURL += "?" + r.URL.RawQuery
-				}
-				fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", postURL)
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
-				}
+				w.Header().Set("Allow", "POST")
+				http.Error(w, "This MCP endpoint does not offer a server-to-client stream; use POST.", http.StatusMethodNotAllowed)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"service":         "dockdeploy-mcp",
-				"status":          "ok",
-				"protocolVersion": "2024-11-05",
+				"service":          "dockdeploy-mcp",
+				"status":           "ok",
+				"transport":        "streamable-http",
+				"protocolVersions": supportedProtocolVersions,
+				"protocolVersion":  latestProtocolVersion,
 			})
 			return
 		}
@@ -160,7 +210,7 @@ func (s *Server) HTTPHandler() http.HandlerFunc {
 		}
 
 		var raw json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes)).Decode(&raw); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(JSONRPCResponse{
 				JSONRPC: "2.0",
@@ -187,6 +237,11 @@ func (s *Server) HTTPHandler() http.HandlerFunc {
 					responses = append(responses, resp)
 				}
 			}
+			if len(responses) == 0 {
+				// A batch of only notifications gets no body (JSON-RPC 2.0 §6).
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(responses)
 			return
@@ -203,6 +258,12 @@ func (s *Server) HTTPHandler() http.HandlerFunc {
 		}
 
 		resp := s.Handle(r.Context(), req)
+		if req.ID == nil {
+			// Notifications (e.g. notifications/initialized) must not be
+			// answered; streamable HTTP clients expect 202 with no body.
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}
@@ -215,10 +276,21 @@ func (s *Server) Handle(ctx context.Context, req JSONRPCRequest) JSONRPCResponse
 		ID:      req.ID,
 	}
 
+	if strings.HasPrefix(req.Method, "notifications/") {
+		// Notifications carry no id and expect no reply. Unknown ones are
+		// ignored rather than answered with "method not found".
+		resp.Result = map[string]any{}
+		return resp
+	}
+
 	switch req.Method {
 	case "initialize":
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
 		resp.Result = map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiateProtocolVersion(params.ProtocolVersion),
 			"capabilities": map[string]any{
 				"tools":     map[string]any{"listChanged": false},
 				"resources": map[string]any{"subscribe": false, "listChanged": false},
@@ -230,10 +302,6 @@ func (s *Server) Handle(ctx context.Context, req JSONRPCRequest) JSONRPCResponse
 			},
 			"instructions": "dockdeploy MCP server provides full infrastructure observability and management for Docker hosts, container lifecycles, file operations, deployment pipelines, and shell command execution.",
 		}
-
-	case "notifications/initialized", "notifications/cancelled", "notifications/progress":
-		// Standard notifications, acknowledge
-		resp.Result = map[string]any{"status": "ok"}
 
 	case "ping":
 		resp.Result = map[string]any{}
@@ -271,7 +339,12 @@ func (s *Server) Handle(ctx context.Context, req JSONRPCRequest) JSONRPCResponse
 				resp.Error = &JSONRPCError{Code: -32000, Message: "Store not initialized"}
 				return resp
 			}
-			serversList, err := s.Store.ListServers(ctx, "", true)
+			if !toolAllowed(ctx, "dockdeploy_list_servers") {
+				resp.Error = &JSONRPCError{Code: -32000, Message: "Your role does not allow reading servers."}
+				return resp
+			}
+			userID, all := listScope(ctx)
+			serversList, err := s.Store.ListServers(ctx, userID, all)
 			if err != nil {
 				resp.Error = &JSONRPCError{Code: -32000, Message: err.Error()}
 				return resp
@@ -292,7 +365,12 @@ func (s *Server) Handle(ctx context.Context, req JSONRPCRequest) JSONRPCResponse
 				resp.Error = &JSONRPCError{Code: -32000, Message: "Store not initialized"}
 				return resp
 			}
-			deps, err := s.Store.ListDeployments(ctx, "", true)
+			if !toolAllowed(ctx, "dockdeploy_list_deployments") {
+				resp.Error = &JSONRPCError{Code: -32000, Message: "Your role does not allow reading deployments."}
+				return resp
+			}
+			userID, all := listScope(ctx)
+			deps, err := s.Store.ListDeployments(ctx, userID, all)
 			if err != nil {
 				resp.Error = &JSONRPCError{Code: -32000, Message: err.Error()}
 				return resp
@@ -418,8 +496,17 @@ func (s *Server) Handle(ctx context.Context, req JSONRPCRequest) JSONRPCResponse
 		}
 
 	case "tools/list":
+		var tools []map[string]any
+		for _, tool := range s.toolDefinitions() {
+			if name, _ := tool["name"].(string); toolAllowed(ctx, name) {
+				tools = append(tools, tool)
+			}
+		}
+		if tools == nil {
+			tools = []map[string]any{}
+		}
 		resp.Result = map[string]any{
-			"tools": s.toolDefinitions(),
+			"tools": tools,
 		}
 
 	case "tools/call":
@@ -541,6 +628,10 @@ func (s *Server) toolDefinitions() []map[string]any {
 					"sudo": map[string]any{
 						"type":        "boolean",
 						"description": "Run docker exec with host sudo elevation if docker socket requires root (default: false)",
+					},
+					"sudo_password": map[string]any{
+						"type":        "string",
+						"description": "One-time sudo password if required",
 					},
 					"timeout_seconds": map[string]any{
 						"type":        "integer",
@@ -784,13 +875,20 @@ func (s *Server) toolDefinitions() []map[string]any {
 }
 
 func (s *Server) callTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	if _, known := toolPermissions[name]; !known {
+		return "", fmt.Errorf("unknown tool: %s", name)
+	}
+	if !toolAllowed(ctx, name) {
+		return "", fmt.Errorf("your role does not allow %s (requires %s)", name, toolPermissions[name])
+	}
 	if s.Store == nil {
 		return "", fmt.Errorf("dockdeploy store is not initialized")
 	}
 
 	switch name {
 	case "dockdeploy_list_servers":
-		serversList, err := s.Store.ListServers(ctx, "", true)
+		userID, all := listScope(ctx)
+		serversList, err := s.Store.ListServers(ctx, userID, all)
 		if err != nil {
 			return "", err
 		}
@@ -935,6 +1033,7 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		user := getString(args, "user")
 		workdir := getString(args, "workdir")
 		sudo := getBool(args, "sudo", false)
+		sudoPassword := getString(args, "sudo_password")
 		timeoutSec := getInt(args, "timeout_seconds", 60)
 		if timeoutSec <= 0 || timeoutSec > 600 {
 			timeoutSec = 60
@@ -960,7 +1059,7 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		fullExecCmd := strings.Join(dockerArgs, " ")
 
 		start := time.Now()
-		res, err := s.Servers.RunCommand(cmdCtx, server, fullExecCmd, sudo)
+		res, err := s.Servers.RunCommand(cmdCtx, server, fullExecCmd, sudo, sudoPassword)
 		duration := time.Since(start).Round(time.Millisecond)
 
 		var sb strings.Builder
@@ -1119,7 +1218,13 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 	case "dockdeploy_get_container_logs":
 		serverID := getString(args, "server_id")
 		containerID := getString(args, "container_id")
+		if containerID == "" {
+			return "", fmt.Errorf("container_id is required")
+		}
 		tail := getInt(args, "tail", 100)
+		if tail <= 0 || tail > 5000 {
+			tail = 100
+		}
 
 		server, err := s.resolveServer(ctx, serverID)
 		if err != nil {
@@ -1146,6 +1251,9 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 	case "dockdeploy_restart_container":
 		serverID := getString(args, "server_id")
 		containerID := getString(args, "container_id")
+		if containerID == "" {
+			return "", fmt.Errorf("container_id is required")
+		}
 
 		server, err := s.resolveServer(ctx, serverID)
 		if err != nil {
@@ -1199,7 +1307,9 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		if path == "" {
 			return "", fmt.Errorf("path is required")
 		}
-		content := getString(args, "content")
+		// Content is written verbatim: trimming would drop trailing newlines
+		// and leading indentation from config files.
+		content, _ := args["content"].(string)
 		sudoPassword := getString(args, "sudo_password")
 
 		server, err := s.resolveServer(ctx, serverID)
@@ -1248,7 +1358,8 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		return sb.String(), nil
 
 	case "dockdeploy_list_deployments":
-		deps, err := s.Store.ListDeployments(ctx, "", true)
+		userID, all := listScope(ctx)
+		deps, err := s.Store.ListDeployments(ctx, userID, all)
 		if err != nil {
 			return "", err
 		}
@@ -1271,6 +1382,9 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		if err != nil {
 			return "", fmt.Errorf("deployment not found: %w", err)
 		}
+		if err := s.checkServerAccess(ctx, dep.ServerID); err != nil {
+			return "", fmt.Errorf("deployment %q not found", deploymentID)
+		}
 
 		run, err := s.Store.EnqueueRun(ctx, dep.ID, store.TriggerAPI, nil)
 		if err != nil {
@@ -1286,6 +1400,14 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 			return "", fmt.Errorf("deployment_id is required")
 		}
 
+		dep, err := s.Store.DeploymentByID(ctx, deploymentID)
+		if err != nil {
+			return "", fmt.Errorf("deployment not found: %w", err)
+		}
+		if err := s.checkServerAccess(ctx, dep.ServerID); err != nil {
+			return "", fmt.Errorf("deployment %q not found", deploymentID)
+		}
+
 		runID := getString(args, "run_id")
 		if runID == "" {
 			runs, err := s.Store.ListRuns(ctx, deploymentID, 1)
@@ -1296,17 +1418,31 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 		}
 
 		run, err := s.Store.RunByID(ctx, runID)
-		if err != nil {
-			return "", fmt.Errorf("run not found: %w", err)
+		if err != nil || run.DeploymentID != dep.ID {
+			return "", fmt.Errorf("run %q not found for deployment %s", runID, dep.ID)
 		}
 
-		logs, err := s.Store.ListLogs(ctx, runID, 0, 500)
-		if err != nil {
-			return "", fmt.Errorf("fetch logs: %w", err)
+		// Keep the last maxLogLines lines: failures are at the end of a run.
+		const maxLogLines = 500
+		var logs []store.LogEntry
+		var after int64
+		for {
+			page, err := s.Store.ListLogs(ctx, runID, after, 1000)
+			if err != nil {
+				return "", fmt.Errorf("fetch logs: %w", err)
+			}
+			logs = append(logs, page...)
+			if len(logs) > maxLogLines {
+				logs = logs[len(logs)-maxLogLines:]
+			}
+			if len(page) < 1000 {
+				break
+			}
+			after = page[len(page)-1].Seq
 		}
 
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Logs for Run #%d (`%s`) - Status: `%s`:\n\n```\n", run.Number, run.ID, run.Status))
+		sb.WriteString(fmt.Sprintf("Logs for Run #%d (`%s`) - Status: `%s` (last %d lines):\n\n```\n", run.Number, run.ID, run.Status, len(logs)))
 		for _, entry := range logs {
 			sb.WriteString(fmt.Sprintf("[%s] %s\n", entry.TS.Format("15:04:05"), entry.Line))
 		}
@@ -1380,13 +1516,25 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 
 func (s *Server) resolveServer(ctx context.Context, serverID string) (*store.Server, error) {
 	if serverID != "" && serverID != "local" {
-		return s.Store.ServerByID(ctx, serverID)
+		server, err := s.Store.ServerByID(ctx, serverID)
+		if err != nil {
+			return nil, fmt.Errorf("server %q not found", serverID)
+		}
+		if err := s.checkServerAccess(ctx, server.ID); err != nil {
+			return nil, err
+		}
+		return server, nil
 	}
-	serversList, err := s.Store.ListServers(ctx, "", true)
+
+	userID, all := listScope(ctx)
+	serversList, err := s.Store.ListServers(ctx, userID, all)
 	if err != nil {
 		return nil, err
 	}
 	if len(serversList) == 0 {
+		if !canCreateServers(ctx) {
+			return nil, fmt.Errorf("no servers are available to you; pass server_id or ask an admin for access")
+		}
 		localServer, createErr := s.Store.CreateServer(ctx, s.Sealer, store.NewServer{
 			Name:               "Local Server",
 			Host:               "localhost",
@@ -1396,25 +1544,19 @@ func (s *Server) resolveServer(ctx context.Context, serverID string) (*store.Ser
 			HostKeyFingerprint: "local",
 			DockerSocket:       "/var/run/docker.sock",
 		})
-		if createErr == nil {
-			return localServer, nil
+		if createErr != nil {
+			return nil, fmt.Errorf("no servers registered and the local server could not be added: %w", createErr)
 		}
-		return &store.Server{
-			ID:           "local",
-			Name:         "Local Server",
-			Host:         "localhost",
-			Port:         0,
-			Username:     "local",
-			AuthMethod:   sshx.AuthLocal,
-			DockerSocket: "/var/run/docker.sock",
-			Status:       store.ServerOnline,
-		}, nil
+		return localServer, nil
 	}
-	// Prefer local server
+	// Prefer the local Docker host when no server was named.
 	for i := range serversList {
-		if serversList[i].AuthMethod == sshx.AuthLocal || serversList[i].ID == serverID {
+		if serversList[i].AuthMethod == sshx.AuthLocal {
 			return &serversList[i], nil
 		}
+	}
+	if serverID == "local" {
+		return nil, fmt.Errorf("no local server is registered; pass a server_id from dockdeploy_list_servers")
 	}
 	return &serversList[0], nil
 }

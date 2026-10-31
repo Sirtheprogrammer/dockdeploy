@@ -3,15 +3,16 @@ package api
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
 
 type ipRateLimiter struct {
-	mu       sync.Mutex
-	limits   map[string][]time.Time
-	maxReqs  int
-	window   time.Duration
+	mu      sync.Mutex
+	limits  map[string][]time.Time
+	maxReqs int
+	window  time.Duration
 }
 
 func newIPRateLimiter(maxReqs int, window time.Duration) *ipRateLimiter {
@@ -77,11 +78,35 @@ func (l *ipRateLimiter) cleanup() {
 	}
 }
 
-// rateLimitAuth limits attempts to sensitive auth endpoints (login, setup) per IP.
+// isCredentialAttempt reports whether the request submits a password, 2FA
+// code or invitation token -- the requests worth brute-forcing. Everything
+// else under /auth (notably GET /auth/me, which the dashboard calls on every
+// page load) must not count, or ordinary browsing locks people out.
+func isCredentialAttempt(r *http.Request) bool {
+	p := strings.TrimSuffix(r.URL.Path, "/")
+	switch {
+	case r.Method == http.MethodPost && (strings.HasSuffix(p, "/auth/setup") ||
+		strings.HasSuffix(p, "/auth/login") ||
+		strings.HasSuffix(p, "/auth/login/2fa") ||
+		strings.HasSuffix(p, "/auth/password") ||
+		strings.HasSuffix(p, "/accept")):
+		return true
+	case r.Method == http.MethodGet && strings.Contains(p, "/auth/invitations/"):
+		return true
+	}
+	return false
+}
+
+// rateLimitAuth limits credential attempts (login, setup, 2FA, invitations)
+// per IP.
 func (s *Server) rateLimitAuth(next http.Handler) http.Handler {
 	limiter := newIPRateLimiter(15, time.Minute)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isCredentialAttempt(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			ip = r.RemoteAddr

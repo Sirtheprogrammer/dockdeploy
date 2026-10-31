@@ -123,13 +123,13 @@ func TestProductionRoutesAreFullyGuarded(t *testing.T) {
 	// Public routes are the ones an unauthenticated visitor can reach, so the
 	// set is pinned. Adding one should be a deliberate, reviewed change.
 	wantPublic := map[string]bool{
-		"GET /api/health":                           true,
-		"GET /api/auth/setup":                       true,
-		"POST /api/auth/setup":                      true,
-		"POST /api/auth/login":                      true,
-		"POST /api/auth/login/2fa":                  true,
-		"GET /api/auth/invitations/{token}":         true,
-		"POST /api/auth/invitations/{token}/accept": true,
+		"GET /api/health":                              true,
+		"GET /api/auth/setup":                          true,
+		"POST /api/auth/setup":                         true,
+		"POST /api/auth/login":                         true,
+		"POST /api/auth/login/2fa":                     true,
+		"GET /api/auth/invitations/{token}":            true,
+		"POST /api/auth/invitations/{token}/accept":    true,
 		"POST /api/deployments/{deploymentID}/webhook": true,
 	}
 	for key, p := range s.policies {

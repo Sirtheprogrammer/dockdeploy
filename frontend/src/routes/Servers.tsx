@@ -56,7 +56,7 @@ export function Servers() {
         ) : null}
 
         {isPending ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} className="h-36" />
             ))}
@@ -77,7 +77,7 @@ export function Servers() {
         ) : null}
 
         {servers && servers.length > 0 ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {servers.map((server) => {
               const caps = capabilitiesOf(server)
               return (
@@ -90,8 +90,9 @@ export function Servers() {
                     <div className="min-w-0">
                       <p className="group-hover:text-primary truncate text-sm font-semibold transition-colors">{server.name}</p>
                       <p className="text-muted-foreground truncate font-mono text-xs">
-                        {server.username}@{server.host}
-                        {server.port !== 22 ? `:${server.port}` : ''}
+                        {server.auth_method === 'local'
+                          ? 'Local Docker host'
+                          : `${server.username}@${server.host}${server.port !== 22 ? `:${server.port}` : ''}`}
                       </p>
                     </div>
                     <ServerStatusBadge status={server.status} />

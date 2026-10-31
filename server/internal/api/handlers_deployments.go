@@ -510,4 +510,3 @@ func (s *Server) handleTriggerWebhook(w http.ResponseWriter, r *http.Request) er
 
 	return JSON(w, s.Log, http.StatusAccepted, run)
 }
-

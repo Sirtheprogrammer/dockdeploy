@@ -315,7 +315,7 @@ function TwoFactorAuthCard() {
                 <p className="text-xs text-muted-foreground">
                   Two-factor authentication adds an extra layer of security to prevent unauthorized access, even if your password is compromised.
                 </p>
-                <Button onClick={startSetup} disabled={setup2FA.isPending}>
+                <Button onClick={startSetup} disabled={setup2FA.isPending} className="h-auto min-h-9 max-w-full whitespace-normal">
                   {setup2FA.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <ShieldCheck className="mr-1.5 size-4" />}
                   Set up Two-Factor Authentication
                 </Button>
@@ -593,17 +593,19 @@ function SessionsCard() {
             key={session.id}
             className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3"
           >
-            <div className="flex min-w-0 items-start gap-3">
+            <div className="flex min-w-0 flex-1 basis-56 items-start gap-3">
               <Monitor className="text-muted-foreground mt-0.5 size-4 shrink-0" aria-hidden />
-              <div className="min-w-0">
-                <p className="truncate text-sm">
-                  {session.user_agent ?? 'Unknown device'}
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="min-w-0 truncate text-sm" title={session.user_agent ?? undefined}>
+                    {session.user_agent ?? 'Unknown device'}
+                  </p>
                   {session.current ? (
-                    <Badge variant="success" className="ml-2">
+                    <Badge variant="success" className="shrink-0">
                       This device
                     </Badge>
                   ) : null}
-                </p>
+                </div>
                 <p className="text-muted-foreground font-mono text-xs">
                   {session.ip ?? 'unknown ip'} &middot; active {formatRelative(session.last_used_at)}
                 </p>
@@ -628,7 +630,7 @@ function SessionsCard() {
 
 export function Profile() {
   return (
-    <div className="grid max-w-3xl min-w-0 gap-4">
+    <div className="grid max-w-3xl min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <ProfileCard />
       <PasswordCard />
       <TwoFactorAuthCard />

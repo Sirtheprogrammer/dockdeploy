@@ -789,7 +789,7 @@ export function ServerFileBrowser({
                     </div>
                   </TableCell>
 
-                  <TableCell className="tabular text-xs text-muted-foreground">
+                  <TableCell className="tabular text-xs whitespace-nowrap text-muted-foreground">
                     {entry.is_dir ? '--' : formatBytes(entry.size)}
                   </TableCell>
 

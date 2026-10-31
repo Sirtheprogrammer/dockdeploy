@@ -79,7 +79,7 @@ export function Domains() {
         title="Domains"
         description="Nginx virtual hosts and automated Let's Encrypt TLS certificates on your servers."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {(serversQuery.data?.length ?? 0) > 0 ? (
               <Button
                 variant="outline"

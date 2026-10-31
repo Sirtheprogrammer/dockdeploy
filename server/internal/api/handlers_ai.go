@@ -15,6 +15,7 @@ import (
 
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/ai"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/auth"
+	"github.com/sirtheprogrammer/docker-deployments/server/internal/mcp"
 	"github.com/sirtheprogrammer/docker-deployments/server/internal/store"
 )
 
@@ -436,7 +437,8 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) error {
 	if s.MCP == nil {
 		return Unavailable("MCP server is not configured or enabled on this instance.")
 	}
-	s.MCP.HTTPHandler().ServeHTTP(w, r)
+	actor := MustIdentity(r.Context())
+	ctx := mcp.WithCaller(r.Context(), &mcp.Caller{UserID: actor.User.ID, Role: actor.Role()})
+	s.MCP.HTTPHandler().ServeHTTP(w, r.WithContext(ctx))
 	return nil
 }
-

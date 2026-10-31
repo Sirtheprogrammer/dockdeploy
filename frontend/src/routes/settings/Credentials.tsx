@@ -323,7 +323,7 @@ export function Credentials() {
   const hasServers = (servers.data?.length ?? 0) > 0
 
   return (
-    <div className="grid max-w-4xl min-w-0 gap-4">
+    <div className="grid max-w-4xl min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <Card>
         <CardHeader className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="space-y-1">
